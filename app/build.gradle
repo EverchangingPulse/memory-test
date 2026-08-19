@@ -17,6 +17,7 @@ android {
     signingConfigs {
         release {
             storeFile file('dualqueue-release.keystore')
+            storeType 'JKS'
             storePassword 'dualqueue123'
             keyAlias 'dualqueue'
             keyPassword 'dualqueue123'
