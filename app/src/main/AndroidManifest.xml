@@ -16,7 +16,7 @@
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:roundIcon="@drawable/ic_launcher"
-        android:label="Dual Queue Memory"
+        android:label="MemSort"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
