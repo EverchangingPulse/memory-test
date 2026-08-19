@@ -1,0 +1,3 @@
+ring d, boolean ok) { code = c; detail = d; correct = ok; }
+    }
+}
