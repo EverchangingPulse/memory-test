@@ -3,6 +3,7 @@ package com.example.dualqueue;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.ResolveInfo;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -74,6 +75,7 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private boolean resultsDelivered;
     private String pendingTranscript = "";
     private long pressStartedAt;
+    private Runnable forceSubmitRunnable;
 
     private Spinner presentationLanguage;
     private Spinner answerLanguage;
@@ -288,3 +290,13 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
                 return true;
             case MotionEvent.ACTION_UP:
                 button.getParent().requestDisallowInterceptTouchEvent(false);
+                fingerDown = false;
+                button.setPressed(false);
+                setHoldButtonState(false, true, false);
+                stopNativeVoiceAnswer(true);
+                button.performClick();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                button.getParent().requestDisallowInterceptTouchEvent(false);
+                fingerDown = false;
+                
