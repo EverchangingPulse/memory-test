@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -13,6 +15,8 @@ import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
+import android.text.InputType;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -27,12 +31,9 @@ import android.widget.Spinner;
 import android.widget.TableLayout;
 import android.widget.TableRow;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,6 +48,17 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private static final String[] LANG_TAGS = {"en-US", "it-IT", "fr-FR", "es-ES", "de-DE", "ja-JP"};
     private static final String LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+    private static final int COLOR_BG = Color.parseColor("#F3F7FB");
+    private static final int COLOR_CARD = Color.parseColor("#FFFFFF");
+    private static final int COLOR_TEXT = Color.parseColor("#0F172A");
+    private static final int COLOR_MUTED = Color.parseColor("#475569");
+    private static final int COLOR_PRIMARY = Color.parseColor("#2563EB");
+    private static final int COLOR_PRIMARY_DARK = Color.parseColor("#1D4ED8");
+    private static final int COLOR_DANGER = Color.parseColor("#DC2626");
+    private static final int COLOR_SUCCESS = Color.parseColor("#16A34A");
+    private static final int COLOR_BORDER = Color.parseColor("#D6E0EA");
+    private static final int COLOR_SOFT = Color.parseColor("#EEF4FF");
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Random random = new Random();
     private final List<ExerciseResult> results = new ArrayList<>();
@@ -54,9 +66,14 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
     private TextToSpeech tts;
     private SpeechRecognizer speechRecognizer;
     private Intent recognizerIntent;
+
     private boolean fingerDown;
     private boolean listening;
+    private boolean recognizerStarting;
+    private boolean submitAfterListening;
+    private boolean resultsDelivered;
     private String pendingTranscript = "";
+    private long pressStartedAt;
 
     private Spinner presentationLanguage;
     private Spinner answerLanguage;
@@ -110,18 +127,25 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
 
     private View buildUi() {
         ScrollView scroll = new ScrollView(this);
-        LinearLayout root = column();
-        root.setPadding(dp(16), dp(16), dp(16), dp(32));
-        scroll.addView(root);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(COLOR_BG);
 
-        TextView title = text("Dual-Queue Running Insertion", 26, true);
+        LinearLayout root = column();
+        root.setPadding(dp(16), dp(16), dp(16), dp(28));
+        scroll.addView(root, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView title = text("Dual-Queue Running Insertion", 28, true);
+        title.setTextColor(COLOR_TEXT);
         root.addView(title);
-        root.addView(text("Native Android 12+ working-memory trainer", 14, false));
+
+        TextView subtitle = text("Native Android trainer with press-and-hold voice answers", 14, false);
+        subtitle.setTextColor(COLOR_MUTED);
+        root.addView(subtitle);
         addGap(root, 12);
 
         LinearLayout config = card();
         root.addView(config);
-        config.addView(text("Exercise configuration", 20, true));
+        config.addView(sectionTitle("Exercise configuration"));
 
         presentationLanguage = spinner(LANG_NAMES);
         answerLanguage = spinner(LANG_NAMES);
@@ -166,55 +190,101 @@ public class MainActivity extends Activity implements TextToSpeech.OnInitListene
         addField(config, "Letter-count focus", focusLetters);
         addField(config, "Number-count focus", focusNumbers);
 
-        startSet = button("Start exercise set");
+        startSet = primaryButton("Start exercise set");
         startSet.setOnClickListener(v -> startSet());
         config.addView(startSet);
 
-        stopSet = button("Stop set");
+        stopSet = outlinedButton("Stop set");
         stopSet.setVisibility(View.GONE);
         stopSet.setOnClickListener(v -> stopSet());
         config.addView(stopSet);
 
         LinearLayout exercise = card();
         root.addView(exercise);
-        counter = text("Ready", 16, true);
-        status = text("Configure the set and start.", 15, false);
-        flash = text("", 72, true);
+        exercise.addView(sectionTitle("Current exercise"));
+
+        counter = metricText("Ready", true);
+        status = helperText("Configure the set and start.");
+        flash = text("", 74, true);
+        flash.setTextColor(COLOR_TEXT);
         flash.setGravity(Gravity.CENTER);
         flash.setMinHeight(dp(180));
+        flash.setBackground(buildRoundedFill(Color.parseColor("#F8FAFC"), COLOR_BORDER, 18));
+        flash.setPadding(dp(12), dp(12), dp(12), dp(12));
+
         exercise.addView(counter);
         exercise.addView(status);
-        exercise.addView(flash);
+        addGap(exercise, 8);
+        exercise.addView(flash, matchWrap());
 
-        nextItem = button("Next item");
+        nextItem = outlinedButton("Next item");
         nextItem.setVisibility(View.GONE);
         nextItem.setOnClickListener(v -> presentNext());
         exercise.addView(nextItem);
 
         responseArea = column();
         responseArea.setVisibility(View.GONE);
+        responseArea.setPadding(0, dp(12), 0, 0);
+
         response = new EditText(this);
         response.setHint("Enter sorted answer");
-        response.setSingleLine(true);
+        styleInput(response);
         responseArea.addView(response, matchWrap());
 
-        submit = button("Submit and continue");
+        TextView hint = helperText("Hold the microphone button like in a messaging app: keep finger down while speaking, lift to send.");
+        responseArea.addView(hint);
+
+        submit = primaryButton("Submit and continue");
         submit.setOnClickListener(v -> submitAnswer(false));
         responseArea.addView(submit);
 
-        holdToSpeak = button("🎙 Hold to speak");
-        holdToSpeak.setOnTouchListener((v, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    fingerDown = true;
-                    v.setPressed(true);
-                    holdToSpeak.setText("🔴 Finger down — release to send");
-                    startNativeVoiceAnswer();
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    fingerDown = false;
-                    v.setPressed(false);
-                    holdToSpeak.setText("Processing…");
-                    stopNativeVoiceAnswer(true);
-                    v.performClick();
-                    return true;
+        holdToSpeak = actionMicButton("🎙  Hold to speak");
+        holdToSpeak.setOnTouchListener((v, event) -> handleHoldTouch(v, event));
+        responseArea.addView(holdToSpeak);
+
+        reveal = outlinedButton("Reveal");
+        reveal.setOnClickListener(v -> submitAnswer(true));
+        responseArea.addView(reveal);
+        exercise.addView(responseArea);
+
+        LinearLayout stats = card();
+        root.addView(stats);
+        stats.addView(sectionTitle("Set statistics"));
+        setStats = metricText("Correct: 0/0 · Accuracy: 0% · Average: 0.0 s · Total: 0.0 s", false);
+        classification = helperText("No completed exercises yet.");
+        stats.addView(setStats);
+        addGap(stats, 6);
+        stats.addView(classification);
+
+        LinearLayout summary = card();
+        root.addView(summary);
+        summary.addView(sectionTitle("Set summary"));
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        summaryTable = new TableLayout(this);
+        hsv.addView(summaryTable);
+        summary.addView(hsv);
+        renderSummary();
+
+        LinearLayout progress = card();
+        root.addView(progress);
+        progress.addView(sectionTitle("Long-term progress"));
+        longTermProgress = helperText("No saved exercises yet.");
+        progress.addView(longTermProgress);
+
+        return scroll;
+    }
+
+    private boolean handleHoldTouch(View button, MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                button.getParent().requestDisallowInterceptTouchEvent(true);
+                fingerDown = true;
+                button.setPressed(true);
+                pressStartedAt = System.currentTimeMillis();
+                setHoldButtonState(true, false, false);
+                startNativeVoiceAnswer();
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                return true;
+            case MotionEvent.ACTION_UP:
+                button.getParent().requestDisallowInterceptTouchEvent(false);
