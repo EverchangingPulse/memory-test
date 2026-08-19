@@ -10,7 +10,32 @@ android {
         applicationId 'com.example.dualqueue'
         minSdk 31
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '1.1'
+    }
+
+    signingConfigs {
+        release {
+            storeFile file('dualqueue-release.keystore')
+            storePassword 'dualqueue123'
+            keyAlias 'dualqueue'
+            keyPassword 'dualqueue123'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.release
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 }
