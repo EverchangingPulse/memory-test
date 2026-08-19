@@ -1,0 +1,220 @@
+                case MotionEvent.ACTION_CANCEL:
+                    fingerDown = false;
+                    v.setPressed(false);
+                    holdToSpeak.setText("🎙 Hold to speak");
+                    stopNativeVoiceAnswer(false);
+                    return true;
+                default:
+                    return true;
+            }
+        });
+        responseArea.addView(holdToSpeak);
+
+        reveal = button("Reveal");
+        reveal.setOnClickListener(v -> submitAnswer(true));
+        responseArea.addView(reveal);
+        exercise.addView(responseArea);
+
+        LinearLayout stats = card();
+        root.addView(stats);
+        stats.addView(text("Set statistics", 20, true));
+        setStats = text("Correct: 0/0 · Accuracy: 0% · Average: 0.0 s · Total: 0.0 s", 15, false);
+        classification = text("No completed exercises yet.", 14, false);
+        stats.addView(setStats);
+        stats.addView(classification);
+
+        LinearLayout summary = card();
+        root.addView(summary);
+        summary.addView(text("Set summary", 20, true));
+        HorizontalScrollView hsv = new HorizontalScrollView(this);
+        summaryTable = new TableLayout(this);
+        hsv.addView(summaryTable);
+        summary.addView(hsv);
+        renderSummary();
+
+        LinearLayout progress = card();
+        root.addView(progress);
+        progress.addView(text("Long-term progress", 20, true));
+        longTermProgress = text("No saved exercises yet.", 14, false);
+        progress.addView(longTermProgress);
+
+        return scroll;
+    }
+
+    private void setupSpeechRecognizer() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            if (holdToSpeak != null) {
+                holdToSpeak.setEnabled(false);
+                holdToSpeak.setText("Voice recognition unavailable");
+            }
+            return;
+        }
+
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+                speechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this);
+            } else {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            }
+        } catch (Exception ex) {
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        }
+
+        speechRecognizer.setRecognitionListener(new RecognitionListener() {
+            @Override public void onReadyForSpeech(Bundle params) {
+                listening = true;
+                status.setText("Listening while your finger is down…");
+            }
+            @Override public void onBeginningOfSpeech() {}
+            @Override public void onRmsChanged(float rmsdB) {}
+            @Override public void onBufferReceived(byte[] buffer) {}
+            @Override public void onEndOfSpeech() {
+                listening = false;
+            }
+            @Override public void onError(int error) {
+                listening = false;
+                if (!fingerDown) {
+                    finishVoiceSubmit();
+                } else {
+                    status.setText("Voice recognizer paused; keep holding or release to retry.");
+                }
+            }
+            @Override public void onResults(Bundle bundle) {
+                listening = false;
+                ArrayList<String> matches = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (matches != null && !matches.isEmpty()) {
+                    pendingTranscript = matches.get(0);
+                    response.setText(normalizeSpokenAnswer(pendingTranscript));
+                }
+                if (!fingerDown) finishVoiceSubmit();
+            }
+            @Override public void onPartialResults(Bundle bundle) {
+                ArrayList<String> partial = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                if (partial != null && !partial.isEmpty()) {
+                    pendingTranscript = partial.get(0);
+                    response.setText(normalizeSpokenAnswer(pendingTranscript));
+                }
+            }
+            @Override public void onEvent(int eventType, Bundle params) {}
+        });
+    }
+
+    private void startNativeVoiceAnswer() {
+        if (!setRunning || presenting || correct.isEmpty()) return;
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION);
+            fingerDown = false;
+            holdToSpeak.setText("🎙 Hold to speak");
+            return;
+        }
+        if (speechRecognizer == null) {
+            setupSpeechRecognizer();
+            if (speechRecognizer == null) return;
+        }
+
+        pendingTranscript = "";
+        response.setText("");
+        recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, selectedLanguage(answerLanguage));
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        try {
+            speechRecognizer.startListening(recognizerIntent);
+            status.setText("Finger down detected. Starting microphone…");
+        } catch (Exception ex) {
+            status.setText("Could not start voice recognition: " + ex.getMessage());
+        }
+    }
+
+    private void stopNativeVoiceAnswer(boolean submitWhenReady) {
+        if (speechRecognizer == null) {
+            holdToSpeak.setText("🎙 Hold to speak");
+            return;
+        }
+        try {
+            if (submitWhenReady) {
+                speechRecognizer.stopListening();
+                handler.postDelayed(() -> {
+                    if (!fingerDown && setRunning && !correct.isEmpty()) finishVoiceSubmit();
+                }, 900);
+            } else {
+                speechRecognizer.cancel();
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void finishVoiceSubmit() {
+        holdToSpeak.setText("🎙 Hold to speak");
+        String value = response.getText().toString().trim();
+        if (value.isEmpty()) {
+            status.setText("No speech recognized. Hold and try again.");
+            return;
+        }
+        if (setRunning && !correct.isEmpty()) submitAnswer(false);
+    }
+
+    private String normalizeSpokenAnswer(String transcript) {
+        String s = transcript.trim().toLowerCase(Locale.ROOT);
+        if (selectedLanguage(answerLanguage).startsWith("it")) {
+            s = s.replace("i lunga", " J ")
+                    .replace("doppia vu", " W ")
+                    .replace("doppia v", " W ")
+                    .replace("ypsilon", " Y ")
+                    .replace("ipsilon", " Y ")
+                    .replace("cappa", " K ")
+                    .replace("ics", " X ")
+                    .replace("acca", " H ");
+        }
+        Map<String, String> common = new HashMap<>();
+        common.put("zero", "0"); common.put("one", "1"); common.put("two", "2"); common.put("three", "3"); common.put("four", "4");
+        common.put("five", "5"); common.put("six", "6"); common.put("seven", "7"); common.put("eight", "8"); common.put("nine", "9"); common.put("ten", "10");
+        common.put("uno", "1"); common.put("due", "2"); common.put("tre", "3"); common.put("quattro", "4"); common.put("cinque", "5");
+        common.put("sei", "6"); common.put("sette", "7"); common.put("otto", "8"); common.put("nove", "9"); common.put("dieci", "10");
+        String[] tokens = s.replaceAll("[,.;:!?]", " ").split("\\s+");
+        List<String> out = new ArrayList<>();
+        for (String token : tokens) {
+            if (token.isEmpty()) continue;
+            out.add(common.getOrDefault(token, token).toUpperCase(Locale.ROOT));
+        }
+        return String.join(separatorValue(), out);
+    }
+
+    private void startSet() {
+        stopSetInternal();
+        results.clear();
+        setIndex = 0;
+        setTarget = clamp(parseInt(exerciseCount.getText().toString(), 10), 1, 100);
+        setStartedAt = System.currentTimeMillis();
+        setRunning = true;
+        startSet.setEnabled(false);
+        stopSet.setVisibility(View.VISIBLE);
+        renderSummary();
+        updateStats();
+        startNextExercise();
+    }
+
+    private void startNextExercise() {
+        if (!setRunning) return;
+        if (setIndex >= setTarget) {
+            finishSet();
+            return;
+        }
+        currentMeta = generateExercise();
+        sequence = currentMeta.sequence;
+        correct = determineCorrect(sequence);
+        sequenceIndex = 0;
+        presenting = true;
+        exerciseStartedAt = System.currentTimeMillis();
+        response.setText("");
+        responseArea.setVisibility(View.GONE);
+        counter.setText("Exercise " + (setIndex + 1) + " of " + setTarget);
+        status.setText("Starting…");
+        handler.postDelayed(this::presentNext, 250);
+    }
+
+    private void presentNext() {
+        if (!setRunning || !presenting) return;
+        if (sequenceIndex >= sequence.size()) {
+            finishPresentation();
