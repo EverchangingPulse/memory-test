@@ -1,28 +1,14 @@
-
-    private void updateStats() {
-        int total = results.size();
-        int ok = 0;
-        long sum = 0;
-        for (ExerciseResult r : results) { if (r.correct) ok++; sum += r.elapsedMs; }
-        int pct = total == 0 ? 0 : (int)Math.round(ok * 100.0 / total);
-        double avg = total == 0 ? 0 : sum / 1000.0 / total;
-        double totalTime = setStartedAt == 0 ? 0 : (System.currentTimeMillis() - setStartedAt) / 1000.0;
-        setStats.setText(String.format(Locale.US, "Correct: %d/%d · Accuracy: %d%% · Average: %.1f s · Total: %.1f s", ok, total, pct, avg, totalTime));
-
-        Map<String, int[]> groups = new LinkedHashMap<>();
-        for (ExerciseResult r : results) {
-            String key = r.length + " chars · " + r.numbers + " N · " + r.letters + " L";
-            int[] g = groups.computeIfAbsent(key, k -> new int[3]);
-            g[1]++; if (r.correct) g[0]++; g[2] += (int)r.elapsedMs;
+            g[2] += (int) r.elapsedMs;
         }
-        if (groups.isEmpty()) classification.setText("No completed exercises yet.");
-        else {
+        if (groups.isEmpty()) {
+            classification.setText("No completed exercises yet.");
+        } else {
             StringBuilder sb = new StringBuilder();
-            for (Map.Entry<String,int[]> e : groups.entrySet()) {
+            for (Map.Entry<String, int[]> e : groups.entrySet()) {
                 int[] g = e.getValue();
                 sb.append(e.getKey()).append(": ").append(g[0]).append("/").append(g[1]).append(" · ")
                         .append(Math.round(g[0] * 100.0 / g[1])).append("% · avg ")
-                        .append(String.format(Locale.US, "%.1f s", g[2]/1000.0/g[1])).append("\n");
+                        .append(String.format(Locale.US, "%.1f s", g[2] / 1000.0 / g[1])).append("\n");
             }
             classification.setText(sb.toString().trim());
         }
@@ -30,16 +16,18 @@
 
     private void renderSummary() {
         summaryTable.removeAllViews();
-        addSummaryRow(new String[]{"#","Chars","N","L","Presented","Expected","Answer","Result","Error","Time"}, true);
+        addSummaryRow(new String[]{"#", "Chars", "N", "L", "Presented", "Expected", "Answer", "Result", "Error", "Time"}, true);
         for (ExerciseResult r : results) {
-            addSummaryRow(new String[]{String.valueOf(r.index),String.valueOf(r.length),String.valueOf(r.numbers),String.valueOf(r.letters),r.presented,r.expected,r.answer,r.result,r.error,String.format(Locale.US,"%.1f s",r.elapsedMs/1000.0)}, false);
+            addSummaryRow(new String[]{String.valueOf(r.index), String.valueOf(r.length), String.valueOf(r.numbers), String.valueOf(r.letters), r.presented, r.expected, r.answer, r.result, r.error, String.format(Locale.US, "%.1f s", r.elapsedMs / 1000.0)}, false);
         }
     }
 
     private void addSummaryRow(String[] cells, boolean header) {
         TableRow row = new TableRow(this);
+        if (!header) row.setBackground(buildRoundedFill(Color.TRANSPARENT, Color.parseColor("#E5EAF1"), 0));
         for (String cell : cells) {
             TextView tv = text(cell, 13, header);
+            tv.setTextColor(header ? COLOR_TEXT : COLOR_MUTED);
             tv.setPadding(dp(8), dp(7), dp(8), dp(7));
             row.addView(tv);
         }
@@ -50,8 +38,8 @@
         SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
         String key = r.length + "_" + r.numbers + "_" + r.letters;
         int total = p.getInt(key + "_total", 0) + 1;
-        int correct = p.getInt(key + "_correct", 0) + (r.correct ? 1 : 0);
-        p.edit().putInt(key + "_total", total).putInt(key + "_correct", correct).apply();
+        int correctCount = p.getInt(key + "_correct", 0) + (r.correct ? 1 : 0);
+        p.edit().putInt(key + "_total", total).putInt(key + "_correct", correctCount).apply();
     }
 
     private void renderProgress() {
@@ -73,7 +61,7 @@
             if (parts.length != 3) continue;
             int total = p.getInt(base + "_total", 0);
             int correctCount = p.getInt(base + "_correct", 0);
-            int pct = total == 0 ? 0 : (int)Math.round(correctCount * 100.0 / total);
+            int pct = total == 0 ? 0 : (int) Math.round(correctCount * 100.0 / total);
             sb.append(parts[0]).append(" chars · ").append(parts[1]).append(" N · ").append(parts[2]).append(" L: ")
                     .append(correctCount).append("/").append(total).append(" · ").append(pct).append("%\n");
         }
@@ -92,52 +80,215 @@
         }
     }
 
-    @Override protected void onDestroy() {
+    @Override
+    protected void onDestroy() {
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
-        if (tts != null) { tts.stop(); tts.shutdown(); }
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
         if (speechRecognizer != null) speechRecognizer.destroy();
     }
 
     private String selectedLanguage(Spinner spinner) { return LANG_TAGS[spinner.getSelectedItemPosition()]; }
     private String selected(Spinner spinner) { return String.valueOf(spinner.getSelectedItem()); }
-    private int numberRangeMax() { return new int[]{9,20,50,99}[numberRange.getSelectedItemPosition()]; }
-    private int intervalMs() { return new int[]{1000,1500,2000,2500,3000}[interval.getSelectedItemPosition()]; }
-    private String separatorValue() { return new String[]{""," ","-",","}[separator.getSelectedItemPosition()]; }
+    private int numberRangeMax() { return new int[]{9, 20, 50, 99}[numberRange.getSelectedItemPosition()]; }
+    private int intervalMs() { return new int[]{1000, 1500, 2000, 2500, 3000}[interval.getSelectedItemPosition()]; }
+    private String separatorValue() { return new String[]{"", " ", "-", ","}[separator.getSelectedItemPosition()]; }
     private String format(List<String> values) { return String.join(separatorValue(), values); }
+
     private String applyLetterCase(String s) {
         int pos = letterCase.getSelectedItemPosition();
         if (pos == 1) return s.toLowerCase(Locale.ROOT);
         if (pos == 2) return random.nextBoolean() ? s.toLowerCase(Locale.ROOT) : s.toUpperCase(Locale.ROOT);
         return s.toUpperCase(Locale.ROOT);
     }
-    private Map<String,Integer> counts(List<String> xs) { Map<String,Integer> m=new HashMap<>(); for(String x:xs)m.put(x,m.getOrDefault(x,0)+1); return m; }
-    private List<String> filterNumbers(List<String> xs) { List<String> out=new ArrayList<>(); for(String x:xs)if(x.matches("\\d+"))out.add(x); return out; }
-    private List<String> filterLetters(List<String> xs) { List<String> out=new ArrayList<>(); for(String x:xs)if(x.matches("[A-Z]"))out.add(x); return out; }
-    private String joinObjects(List<Object> xs, String sep) { List<String>s=new ArrayList<>(); for(Object x:xs)s.add(String.valueOf(x)); return String.join(sep,s); }
-    private int parseInt(String s,int fallback){try{return Integer.parseInt(s.trim());}catch(Exception e){return fallback;}}
-    private int clamp(int x,int min,int max){return Math.max(min,Math.min(max,x));}
 
-    private LinearLayout column() { LinearLayout l=new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); return l; }
-    private LinearLayout card() { LinearLayout l=column(); l.setPadding(dp(14),dp(14),dp(14),dp(14)); LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2); p.setMargins(0,0,0,dp(14)); l.setLayoutParams(p); l.setBackgroundColor(Color.rgb(245,245,245)); return l; }
-    private TextView text(String s,int sp,boolean bold){TextView v=new TextView(this);v.setText(s);v.setTextSize(sp);v.setTextColor(Color.rgb(20,20,20));if(bold)v.setTypeface(null,1);v.setPadding(0,dp(3),0,dp(3));return v;}
-    private Button button(String s){Button b=new Button(this);b.setText(s);b.setAllCaps(false);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(0,dp(6),0,0);b.setLayoutParams(p);return b;}
-    private EditText numberInput(String value){EditText e=new EditText(this);e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);e.setText(value);return e;}
-    private Spinner spinner(String[] values){Spinner s=new Spinner(this);ArrayAdapter<String>a=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,values);s.setAdapter(a);return s;}
-    private void addField(LinearLayout parent,String label,View field){parent.addView(text(label,14,true));parent.addView(field,matchWrap());addGap(parent,6);}
-    private void addGap(LinearLayout parent,int dp){View v=new View(this);parent.addView(v,new LinearLayout.LayoutParams(1,dp(dp)));}
-    private LinearLayout.LayoutParams matchWrap(){return new LinearLayout.LayoutParams(-1,-2);}
-    private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    private Map<String, Integer> counts(List<String> xs) {
+        Map<String, Integer> m = new HashMap<>();
+        for (String x : xs) m.put(x, m.getOrDefault(x, 0) + 1);
+        return m;
+    }
+
+    private List<String> filterNumbers(List<String> xs) {
+        List<String> out = new ArrayList<>();
+        for (String x : xs) if (x.matches("\\d+")) out.add(x);
+        return out;
+    }
+
+    private List<String> filterLetters(List<String> xs) {
+        List<String> out = new ArrayList<>();
+        for (String x : xs) if (x.matches("[A-Z]")) out.add(x);
+        return out;
+    }
+
+    private String joinObjects(List<Object> xs, String sep) {
+        List<String> s = new ArrayList<>();
+        for (Object x : xs) s.add(String.valueOf(x));
+        return String.join(sep, s);
+    }
+
+    private int parseInt(String s, int fallback) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private int clamp(int x, int min, int max) { return Math.max(min, Math.min(max, x)); }
+
+    private LinearLayout column() {
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.VERTICAL);
+        return l;
+    }
+
+    private LinearLayout card() {
+        LinearLayout l = column();
+        l.setPadding(dp(16), dp(16), dp(16), dp(16));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.setMargins(0, 0, 0, dp(14));
+        l.setLayoutParams(p);
+        l.setBackground(buildRoundedFill(COLOR_CARD, Color.parseColor("#E2E8F0"), 20));
+        l.setElevation(dp(2));
+        return l;
+    }
+
+    private TextView text(String s, int sp, boolean bold) {
+        TextView v = new TextView(this);
+        v.setText(s);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        v.setTextColor(COLOR_TEXT);
+        if (bold) v.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
+        v.setPadding(0, dp(3), 0, dp(3));
+        return v;
+    }
+
+    private TextView sectionTitle(String s) {
+        TextView tv = text(s, 20, true);
+        tv.setTextColor(COLOR_TEXT);
+        return tv;
+    }
+
+    private TextView helperText(String s) {
+        TextView tv = text(s, 14, false);
+        tv.setTextColor(COLOR_MUTED);
+        return tv;
+    }
+
+    private TextView metricText(String s, boolean big) {
+        TextView tv = text(s, big ? 18 : 15, true);
+        tv.setTextColor(COLOR_TEXT);
+        return tv;
+    }
+
+    private Button primaryButton(String s) {
+        Button b = baseButton(s);
+        b.setTextColor(Color.WHITE);
+        b.setBackground(buildButtonFill(COLOR_PRIMARY, COLOR_PRIMARY_DARK));
+        return b;
+    }
+
+    private Button outlinedButton(String s) {
+        Button b = baseButton(s);
+        b.setTextColor(COLOR_PRIMARY_DARK);
+        b.setBackground(buildRoundedFill(COLOR_SOFT, Color.parseColor("#BFD3FF"), 16));
+        return b;
+    }
+
+    private Button actionMicButton(String s) {
+        Button b = baseButton(s);
+        b.setTextColor(Color.WHITE);
+        b.setBackground(buildButtonFill(COLOR_SUCCESS, Color.parseColor("#15803D")));
+        b.setMinHeight(dp(56));
+        return b;
+    }
+
+    private Button baseButton(String s) {
+        Button b = new Button(this);
+        b.setText(s);
+        b.setAllCaps(false);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.setMargins(0, dp(8), 0, 0);
+        b.setLayoutParams(p);
+        b.setPadding(dp(16), dp(14), dp(16), dp(14));
+        return b;
+    }
+
+    private void styleInput(EditText e) {
+        e.setTextColor(COLOR_TEXT);
+        e.setHintTextColor(Color.parseColor("#94A3B8"));
+        e.setBackground(buildRoundedFill(Color.WHITE, COLOR_BORDER, 14));
+        e.setPadding(dp(14), dp(12), dp(14), dp(12));
+    }
+
+    private EditText numberInput(String value) {
+        EditText e = new EditText(this);
+        e.setInputType(InputType.TYPE_CLASS_NUMBER);
+        e.setText(value);
+        styleInput(e);
+        return e;
+    }
+
+    private Spinner spinner(String[] values) {
+        Spinner s = new Spinner(this);
+        ArrayAdapter<String> a = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, values);
+        a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        s.setAdapter(a);
+        s.setBackground(buildRoundedFill(Color.WHITE, COLOR_BORDER, 14));
+        s.setPadding(dp(12), dp(8), dp(12), dp(8));
+        return s;
+    }
+
+    private void addField(LinearLayout parent, String label, View field) {
+        parent.addView(helperText(label));
+        parent.addView(field, matchWrap());
+        addGap(parent, 6);
+    }
+
+    private void addGap(LinearLayout parent, int dp) {
+        View v = new View(this);
+        parent.addView(v, new LinearLayout.LayoutParams(1, dp(dp)));
+    }
+
+    private LinearLayout.LayoutParams matchWrap() { return new LinearLayout.LayoutParams(-1, -2); }
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private GradientDrawable buildRoundedFill(int fill, int stroke, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(dp(radiusDp));
+        drawable.setStroke(dp(1), stroke);
+        return drawable;
+    }
+
+    private GradientDrawable buildButtonFill(int fill, int stroke) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(dp(18));
+        drawable.setStroke(dp(1), stroke);
+        return drawable;
+    }
 
     private static class ExerciseMeta {
-        final List<Object> sequence; final int length,numbers,letters;
-        ExerciseMeta(List<Object>s,int l,int n,int le){sequence=s;length=l;numbers=n;letters=le;}
+        final List<Object> sequence;
+        final int length, numbers, letters;
+        ExerciseMeta(List<Object> s, int l, int n, int le) { sequence = s; length = l; numbers = n; letters = le; }
     }
+
     private static class ExerciseResult {
-        int index,length,numbers,letters; String presented,expected,answer,result,error; boolean correct; long elapsedMs;
+        int index, length, numbers, letters;
+        String presented, expected, answer, result, error;
+        boolean correct;
+        long elapsedMs;
     }
+
     private static class Validation {
-        final String code,detail; final boolean correct;
-        Validation(String c,String d,boolean ok){code=c;detail=d;correct=ok;}
+        final String code, detail;
+        final boolean correct;
+        Validation(String c, String d, boolean ok) { code = c; detail = d; correct = ok; }
     }
 }
