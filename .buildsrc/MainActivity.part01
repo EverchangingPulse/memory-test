@@ -1,13 +1,4 @@
-                fingerDown = false;
-                button.setPressed(false);
-                setHoldButtonState(false, true, false);
-                stopNativeVoiceAnswer(true);
-                button.performClick();
-                return true;
-            case MotionEvent.ACTION_CANCEL:
-                button.getParent().requestDisallowInterceptTouchEvent(false);
-                fingerDown = false;
-                button.setPressed(false);
+ button.setPressed(false);
                 setHoldButtonState(false, false, false);
                 stopNativeVoiceAnswer(false);
                 return true;
@@ -19,11 +10,12 @@
     private void setupSpeechRecognizer() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             if (holdToSpeak != null) {
-                holdToSpeak.setEnabled(false);
-                holdToSpeak.setText("Voice recognition unavailable");
+                setHoldButtonState(false, false, true);
             }
             return;
         }
+
+        destroySpeechRecognizer();
 
         try {
             if (android.os.Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
@@ -39,7 +31,7 @@
             @Override public void onReadyForSpeech(Bundle params) {
                 recognizerStarting = false;
                 listening = true;
-                status.setText("Recording… keep your finger down while speaking.");
+                status.setText("Listening… keep holding and speak.");
             }
             @Override public void onBeginningOfSpeech() {
                 status.setText("Recording your answer…");
@@ -48,21 +40,22 @@
             @Override public void onBufferReceived(byte[] buffer) {}
             @Override public void onEndOfSpeech() {
                 listening = false;
-                if (submitAfterListening) {
-                    status.setText("Processing your answer…");
-                }
+                if (submitAfterListening) status.setText("Processing your answer…");
             }
             @Override public void onError(int error) {
                 listening = false;
                 recognizerStarting = false;
-                if (submitAfterListening && !resultsDelivered) {
+                if (submitAfterListening) {
+                    if (!pendingTranscript.trim().isEmpty()) {
+                        response.setText(normalizeSpokenAnswer(pendingTranscript));
+                    }
                     finishVoiceSubmit();
                     return;
                 }
                 if (fingerDown) {
                     status.setText("Listening… keep holding and speak clearly.");
                 } else {
-                    status.setText("Voice recognition stopped. Try again.");
+                    status.setText(readableRecognizerError(error));
                     setHoldButtonState(false, false, false);
                 }
             }
@@ -75,9 +68,7 @@
                     pendingTranscript = matches.get(0);
                     response.setText(normalizeSpokenAnswer(pendingTranscript));
                 }
-                if (submitAfterListening) {
-                    finishVoiceSubmit();
-                }
+                if (submitAfterListening) finishVoiceSubmit();
             }
             @Override public void onPartialResults(Bundle bundle) {
                 ArrayList<String> partial = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
@@ -90,6 +81,15 @@
         });
     }
 
+    private void destroySpeechRecognizer() {
+        if (speechRecognizer != null) {
+            try {
+                speechRecognizer.destroy();
+            } catch (Exception ignored) {}
+            speechRecognizer = null;
+        }
+    }
+
     private void startNativeVoiceAnswer() {
         if (!setRunning || presenting || correct.isEmpty()) return;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -98,11 +98,11 @@
             setHoldButtonState(false, false, false);
             return;
         }
-        if (speechRecognizer == null) {
-            setupSpeechRecognizer();
-            if (speechRecognizer == null) return;
-        }
 
+        setupSpeechRecognizer();
+        if (speechRecognizer == null) return;
+
+        handler.removeCallbacksAndMessages(null);
         pendingTranscript = "";
         response.setText("");
         recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
@@ -110,17 +110,18 @@
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, selectedLanguage(answerLanguage));
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 800L);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500L);
 
         submitAfterListening = false;
         resultsDelivered = false;
         recognizerStarting = true;
-        try {
-            speechRecognizer.cancel();
-        } catch (Exception ignored) {}
+        forceSubmitRunnable = () -> {
+            if (submitAfterListening) finishVoiceSubmit();
+        };
         try {
             speechRecognizer.startListening(recognizerIntent);
             status.setText("Starting microphone… keep your finger down.");
@@ -146,15 +147,16 @@
                 handler.postDelayed(() -> {
                     try {
                         if (speechRecognizer != null) speechRecognizer.stopListening();
-                    } catch (Exception ignored) {}
-                    handler.postDelayed(() -> {
-                        if (!fingerDown && submitAfterListening && !resultsDelivered) {
-                            finishVoiceSubmit();
-                        }
-                    }, 1100);
+                    } catch (Exception ignored) {
+                        finishVoiceSubmit();
+                    }
+                    if (forceSubmitRunnable != null) {
+                        handler.postDelayed(forceSubmitRunnable, 1800);
+                    }
                 }, extraDelay);
             } else {
                 submitAfterListening = false;
+                if (forceSubmitRunnable != null) handler.removeCallbacks(forceSubmitRunnable);
                 speechRecognizer.cancel();
                 setHoldButtonState(false, false, false);
             }
@@ -164,9 +166,14 @@
     }
 
     private void finishVoiceSubmit() {
+        if (forceSubmitRunnable != null) handler.removeCallbacks(forceSubmitRunnable);
         submitAfterListening = false;
         setHoldButtonState(false, false, false);
         String value = response.getText().toString().trim();
+        if (value.isEmpty() && !pendingTranscript.trim().isEmpty()) {
+            value = normalizeSpokenAnswer(pendingTranscript);
+            response.setText(value);
+        }
         if (value.isEmpty()) {
             status.setText("No speech recognized. Hold and try again.");
             return;
@@ -261,3 +268,10 @@
         handler.postDelayed(this::presentNext, 250);
     }
 
+    private void presentNext() {
+        if (!setRunning || !presenting) return;
+        if (sequenceIndex >= sequence.size()) {
+            finishPresentation();
+            return;
+        }
+        Object value = sequen
