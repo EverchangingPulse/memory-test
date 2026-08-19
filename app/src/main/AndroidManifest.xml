@@ -14,7 +14,9 @@
 
     <application
         android:allowBackup="true"
-        android:label="Dual-Queue Running Insertion"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
+        android:label="Dual Queue Memory"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
