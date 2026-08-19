@@ -1,3 +1,7 @@
+    private void presentNext() {
+        if (!setRunning || !presenting) return;
+        if (sequenceIndex >= sequence.size()) {
+            finishPresentation();
             return;
         }
         Object value = sequence.get(sequenceIndex++);
@@ -7,7 +11,7 @@
         String m = selected(mode);
         if (m.equals("Visual") || m.equals("Both") || m.equals("Self-paced")) {
             flash.setText(String.valueOf(value));
-            handler.postDelayed(() -> flash.setText(""), Math.min(850, (int)(delay * .65)));
+            handler.postDelayed(() -> flash.setText(""), Math.min(850, (int) (delay * .65)));
         }
         if (m.equals("Audio") || m.equals("Both") || m.equals("Self-paced")) speak(value);
 
@@ -94,7 +98,7 @@
             if (selected(focusLetters).equals("More letters")) ratio -= .15;
             if (selected(focusLetters).equals("Fewer letters")) ratio += .15;
             ratio = Math.max(.1, Math.min(.9, ratio));
-            numbers = (int)Math.round(length * ratio);
+            numbers = (int) Math.round(length * ratio);
             if (length > 1) numbers = clamp(numbers, 1, length - 1);
         }
         int letters = length - numbers;
@@ -136,7 +140,7 @@
         List<Integer> nums = new ArrayList<>();
         List<String> lets = new ArrayList<>();
         for (Object x : seq) {
-            if (x instanceof Integer) nums.add((Integer)x);
+            if (x instanceof Integer) nums.add((Integer) x);
             else lets.add(String.valueOf(x).toUpperCase(Locale.ROOT));
         }
         Collections.sort(nums);
@@ -162,13 +166,25 @@
         List<String> result = new ArrayList<>();
         int i = 0;
         List<String> nums = filterNumbers(expected);
-        nums.sort((a,b) -> Integer.compare(b.length(), a.length()));
+        nums.sort((a, b) -> Integer.compare(b.length(), a.length()));
         while (i < compact.length()) {
             char c = compact.charAt(i);
-            if (Character.isLetter(c)) { result.add(String.valueOf(c)); i++; continue; }
+            if (Character.isLetter(c)) {
+                result.add(String.valueOf(c));
+                i++;
+                continue;
+            }
             boolean matched = false;
-            for (String n : nums) if (compact.startsWith(n, i)) { result.add(n); i += n.length(); matched = true; break; }
-            if (!matched) { result.add(String.valueOf(c)); i++; }
+            for (String n : nums) if (compact.startsWith(n, i)) {
+                result.add(n);
+                i += n.length();
+                matched = true;
+                break;
+            }
+            if (!matched) {
+                result.add(String.valueOf(c));
+                i++;
+            }
         }
         return result;
     }
@@ -182,7 +198,8 @@
         tts.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "item");
     }
 
-    @Override public void onInit(int statusCode) {
+    @Override
+    public void onInit(int statusCode) {
         if (statusCode == TextToSpeech.SUCCESS && tts != null) tts.setSpeechRate(1.0f);
     }
 
@@ -211,10 +228,37 @@
         presenting = false;
         handler.removeCallbacksAndMessages(null);
         if (tts != null) tts.stop();
-        if (speechRecognizer != null) try { speechRecognizer.cancel(); } catch (Exception ignored) {}
+        if (speechRecognizer != null) {
+            try {
+                speechRecognizer.cancel();
+            } catch (Exception ignored) {}
+        }
         fingerDown = false;
+        listening = false;
+        recognizerStarting = false;
+        submitAfterListening = false;
         startSet.setEnabled(true);
         stopSet.setVisibility(View.GONE);
         nextItem.setVisibility(View.GONE);
-        holdToSpeak.setText("🎙 Hold to speak");
+        setHoldButtonState(false, false, false);
     }
+
+    private void updateStats() {
+        int total = results.size();
+        int ok = 0;
+        long sum = 0;
+        for (ExerciseResult r : results) {
+            if (r.correct) ok++;
+            sum += r.elapsedMs;
+        }
+        int pct = total == 0 ? 0 : (int) Math.round(ok * 100.0 / total);
+        double avg = total == 0 ? 0 : sum / 1000.0 / total;
+        double totalTime = setStartedAt == 0 ? 0 : (System.currentTimeMillis() - setStartedAt) / 1000.0;
+        setStats.setText(String.format(Locale.US, "Correct: %d/%d · Accuracy: %d%% · Average: %.1f s · Total: %.1f s", ok, total, pct, avg, totalTime));
+
+        Map<String, int[]> groups = new LinkedHashMap<>();
+        for (ExerciseResult r : results) {
+            String key = r.length + " chars · " + r.numbers + " N · " + r.letters + " L";
+            int[] g = groups.computeIfAbsent(key, k -> new int[3]);
+            g[1]++;
+            if (r.correct) g[0]++;
