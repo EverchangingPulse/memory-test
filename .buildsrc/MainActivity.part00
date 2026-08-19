@@ -1,0 +1,220 @@
+package com.example.dualqueue;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import android.speech.tts.TextToSpeech;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.HorizontalScrollView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Spinner;
+import android.widget.TableLayout;
+import android.widget.TableRow;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Random;
+
+public class MainActivity extends Activity implements TextToSpeech.OnInitListener {
+    private static final int MIC_PERMISSION = 1001;
+    private static final String PREFS = "dual_queue_progress";
+    private static final String[] LANG_NAMES = {"English", "Italiano", "Français", "Español", "Deutsch", "日本語"};
+    private static final String[] LANG_TAGS = {"en-US", "it-IT", "fr-FR", "es-ES", "de-DE", "ja-JP"};
+    private static final String LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Random random = new Random();
+    private final List<ExerciseResult> results = new ArrayList<>();
+
+    private TextToSpeech tts;
+    private SpeechRecognizer speechRecognizer;
+    private Intent recognizerIntent;
+    private boolean fingerDown;
+    private boolean listening;
+    private String pendingTranscript = "";
+
+    private Spinner presentationLanguage;
+    private Spinner answerLanguage;
+    private Spinner itemType;
+    private Spinner numberRange;
+    private Spinner numbersRatio;
+    private Spinner letterCase;
+    private Spinner separator;
+    private Spinner interval;
+    private Spinner mode;
+    private Spinner focusLength;
+    private Spinner focusLetters;
+    private Spinner focusNumbers;
+    private EditText maxCharacters;
+    private EditText exerciseCount;
+    private TextView status;
+    private TextView counter;
+    private TextView flash;
+    private EditText response;
+    private Button submit;
+    private Button reveal;
+    private Button holdToSpeak;
+    private Button nextItem;
+    private Button stopSet;
+    private Button startSet;
+    private LinearLayout responseArea;
+    private TextView setStats;
+    private TextView classification;
+    private TableLayout summaryTable;
+    private TextView longTermProgress;
+
+    private List<Object> sequence = new ArrayList<>();
+    private List<String> correct = new ArrayList<>();
+    private int sequenceIndex;
+    private int setIndex;
+    private int setTarget;
+    private long setStartedAt;
+    private long exerciseStartedAt;
+    private boolean setRunning;
+    private boolean presenting;
+    private ExerciseMeta currentMeta;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        tts = new TextToSpeech(this, this);
+        setContentView(buildUi());
+        setupSpeechRecognizer();
+        renderProgress();
+    }
+
+    private View buildUi() {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout root = column();
+        root.setPadding(dp(16), dp(16), dp(16), dp(32));
+        scroll.addView(root);
+
+        TextView title = text("Dual-Queue Running Insertion", 26, true);
+        root.addView(title);
+        root.addView(text("Native Android 12+ working-memory trainer", 14, false));
+        addGap(root, 12);
+
+        LinearLayout config = card();
+        root.addView(config);
+        config.addView(text("Exercise configuration", 20, true));
+
+        presentationLanguage = spinner(LANG_NAMES);
+        answerLanguage = spinner(LANG_NAMES);
+        addField(config, "Presentation language", presentationLanguage);
+        addField(config, "Voice-answer language", answerLanguage);
+
+        itemType = spinner(new String[]{"Numbers + letters", "Numbers only", "Letters only"});
+        addField(config, "Items", itemType);
+
+        maxCharacters = numberInput("5");
+        addField(config, "Maximum characters", maxCharacters);
+
+        numberRange = spinner(new String[]{"1–9", "1–20", "1–50", "1–99"});
+        numberRange.setSelection(1);
+        addField(config, "Number range", numberRange);
+
+        numbersRatio = spinner(new String[]{"30%", "40%", "50%", "60%", "70%"});
+        numbersRatio.setSelection(2);
+        addField(config, "Numbers in mixed exercises", numbersRatio);
+
+        letterCase = spinner(new String[]{"UPPER", "lower", "MiXeD"});
+        addField(config, "Letter case", letterCase);
+
+        separator = spinner(new String[]{"Nothing", "Spaces", "Hyphens (-)", "Commas (,)"});
+        separator.setSelection(2);
+        addField(config, "Answer separator", separator);
+
+        exerciseCount = numberInput("10");
+        addField(config, "Exercises in this set", exerciseCount);
+
+        interval = spinner(new String[]{"1.0 second", "1.5 seconds", "2.0 seconds", "2.5 seconds", "3.0 seconds"});
+        interval.setSelection(1);
+        addField(config, "Presentation interval", interval);
+
+        mode = spinner(new String[]{"Audio", "Visual", "Both", "Self-paced"});
+        addField(config, "Presentation mode", mode);
+
+        focusLength = spinner(new String[]{"Balanced", "More short exercises", "More long exercises", "Mostly maximum length"});
+        focusLetters = spinner(new String[]{"Balanced", "More letters", "Fewer letters"});
+        focusNumbers = spinner(new String[]{"Balanced", "More numbers", "Fewer numbers"});
+        addField(config, "Character-count focus", focusLength);
+        addField(config, "Letter-count focus", focusLetters);
+        addField(config, "Number-count focus", focusNumbers);
+
+        startSet = button("Start exercise set");
+        startSet.setOnClickListener(v -> startSet());
+        config.addView(startSet);
+
+        stopSet = button("Stop set");
+        stopSet.setVisibility(View.GONE);
+        stopSet.setOnClickListener(v -> stopSet());
+        config.addView(stopSet);
+
+        LinearLayout exercise = card();
+        root.addView(exercise);
+        counter = text("Ready", 16, true);
+        status = text("Configure the set and start.", 15, false);
+        flash = text("", 72, true);
+        flash.setGravity(Gravity.CENTER);
+        flash.setMinHeight(dp(180));
+        exercise.addView(counter);
+        exercise.addView(status);
+        exercise.addView(flash);
+
+        nextItem = button("Next item");
+        nextItem.setVisibility(View.GONE);
+        nextItem.setOnClickListener(v -> presentNext());
+        exercise.addView(nextItem);
+
+        responseArea = column();
+        responseArea.setVisibility(View.GONE);
+        response = new EditText(this);
+        response.setHint("Enter sorted answer");
+        response.setSingleLine(true);
+        responseArea.addView(response, matchWrap());
+
+        submit = button("Submit and continue");
+        submit.setOnClickListener(v -> submitAnswer(false));
+        responseArea.addView(submit);
+
+        holdToSpeak = button("🎙 Hold to speak");
+        holdToSpeak.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    fingerDown = true;
+                    v.setPressed(true);
+                    holdToSpeak.setText("🔴 Finger down — release to send");
+                    startNativeVoiceAnswer();
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    fingerDown = false;
+                    v.setPressed(false);
+                    holdToSpeak.setText("Processing…");
+                    stopNativeVoiceAnswer(true);
+                    v.performClick();
+                    return true;
