@@ -35,15 +35,25 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Assemble MainActivity source
+      - name: Assemble and patch MemSort source
         run: |
           mkdir -p app/src/main/java/com/example/dualqueue
           cat .buildsrc/MainActivity.part* > app/src/main/java/com/example/dualqueue/MainActivity.java
+          python3 .buildsrc/patch_memsort_vosk.py
+
+      - name: Bundle Vosk English mobile model
+        run: |
+          rm -rf app/src/main/assets/vosk-model /tmp/vosk-model
+          mkdir -p app/src/main/assets /tmp/vosk-model
+          curl --fail --location --retry 3 --output /tmp/vosk-model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+          unzip -q /tmp/vosk-model.zip -d /tmp/vosk-model
+          mv /tmp/vosk-model/vosk-model-small-en-us-0.15 app/src/main/assets/vosk-model
+          test -f app/src/main/assets/vosk-model/conf/model.conf
 
       - name: Restore signing keystore
         run: base64 --decode .buildsrc/dualqueue-release.keystore.b64 > app/dualqueue-release.keystore
 
-      - name: Build signed release APK
+      - name: Build signed MemSort release APK
         run: gradle --no-daemon :app:assembleRelease
 
       - name: Verify APK signature
@@ -54,10 +64,14 @@ jobs:
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging app/build/outputs/apk/release/app-release.apk | head -30
 
-      - name: Upload signed APK
+      - name: Verify Vosk model packaged
+        run: |
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep 'assets/vosk-model/conf/model.conf'
+
+      - name: Upload MemSort APK
         uses: actions/upload-artifact@v4
         with:
-          name: dual-queue-signed-release-apk
+          name: MemSort-v1.2-signed-apk
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
