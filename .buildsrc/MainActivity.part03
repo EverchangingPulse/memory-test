@@ -1,15 +1,4 @@
-            g[2] += (int) r.elapsedMs;
-        }
-        if (groups.isEmpty()) {
-            classification.setText("No completed exercises yet.");
-        } else {
-            StringBuilder sb = new StringBuilder();
-            for (Map.Entry<String, int[]> e : groups.entrySet()) {
-                int[] g = e.getValue();
-                sb.append(e.getKey()).append(": ").append(g[0]).append("/").append(g[1]).append(" · ")
-                        .append(Math.round(g[0] * 100.0 / g[1])).append("% · avg ")
-                        .append(String.format(Locale.US, "%.1f s", g[2] / 1000.0 / g[1])).append("\n");
-            }
+      }
             classification.setText(sb.toString().trim());
         }
     }
@@ -88,7 +77,25 @@
             tts.stop();
             tts.shutdown();
         }
-        if (speechRecognizer != null) speechRecognizer.destroy();
+        destroySpeechRecognizer();
+    }
+
+
+    private String readableRecognizerError(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_AUDIO: return "Audio error while listening.";
+            case SpeechRecognizer.ERROR_CLIENT: return "Speech recognition was interrupted.";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "Microphone permission missing.";
+            case SpeechRecognizer.ERROR_NETWORK: return "Network error during speech recognition.";
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "Speech recognition network timed out.";
+            case SpeechRecognizer.ERROR_NO_MATCH: return "No speech match found.";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "Speech recognizer is busy. Try again.";
+            case SpeechRecognizer.ERROR_SERVER: return "Speech recognition service error.";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "No speech detected.";
+            case 12: return "Language not supported by recognizer.";
+            case 13: return "Language unavailable on this device.";
+            default: return "Voice recognition stopped. Try again.";
+        }
     }
 
     private String selectedLanguage(Spinner spinner) { return LANG_TAGS[spinner.getSelectedItemPosition()]; }
@@ -289,6 +296,4 @@
     private static class Validation {
         final String code, detail;
         final boolean correct;
-        Validation(String c, String d, boolean ok) { code = c; detail = d; correct = ok; }
-    }
-}
+        Validation(String c, St
