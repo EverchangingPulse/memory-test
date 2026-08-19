@@ -1,10 +1,4 @@
-    private void presentNext() {
-        if (!setRunning || !presenting) return;
-        if (sequenceIndex >= sequence.size()) {
-            finishPresentation();
-            return;
-        }
-        Object value = sequence.get(sequenceIndex++);
+ce.get(sequenceIndex++);
         int delay = intervalMs();
         status.setText("Item " + sequenceIndex + " of " + sequence.size());
 
@@ -233,6 +227,7 @@
                 speechRecognizer.cancel();
             } catch (Exception ignored) {}
         }
+        if (forceSubmitRunnable != null) handler.removeCallbacks(forceSubmitRunnable);
         fingerDown = false;
         listening = false;
         recognizerStarting = false;
@@ -262,3 +257,15 @@
             int[] g = groups.computeIfAbsent(key, k -> new int[3]);
             g[1]++;
             if (r.correct) g[0]++;
+            g[2] += (int) r.elapsedMs;
+        }
+        if (groups.isEmpty()) {
+            classification.setText("No completed exercises yet.");
+        } else {
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, int[]> e : groups.entrySet()) {
+                int[] g = e.getValue();
+                sb.append(e.getKey()).append(": ").append(g[0]).append("/").append(g[1]).append(" · ")
+                        .append(Math.round(g[0] * 100.0 / g[1])).append("% · avg ")
+                        .append(String.format(Locale.US, "%.1f s", g[2] / 1000.0 / g[1])).append("\n");
+       
