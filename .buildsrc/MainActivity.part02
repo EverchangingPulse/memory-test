@@ -1,0 +1,220 @@
+            return;
+        }
+        Object value = sequence.get(sequenceIndex++);
+        int delay = intervalMs();
+        status.setText("Item " + sequenceIndex + " of " + sequence.size());
+
+        String m = selected(mode);
+        if (m.equals("Visual") || m.equals("Both") || m.equals("Self-paced")) {
+            flash.setText(String.valueOf(value));
+            handler.postDelayed(() -> flash.setText(""), Math.min(850, (int)(delay * .65)));
+        }
+        if (m.equals("Audio") || m.equals("Both") || m.equals("Self-paced")) speak(value);
+
+        if (m.equals("Self-paced")) {
+            nextItem.setVisibility(View.VISIBLE);
+            nextItem.setText(sequenceIndex >= sequence.size() ? "Finish sequence" : "Next item");
+        } else {
+            handler.postDelayed(this::presentNext, delay);
+        }
+    }
+
+    private void finishPresentation() {
+        presenting = false;
+        flash.setText("");
+        nextItem.setVisibility(View.GONE);
+        responseArea.setVisibility(View.VISIBLE);
+        status.setText("Sequence complete. Answer from memory.");
+        response.requestFocus();
+    }
+
+    private void submitAnswer(boolean revealed) {
+        if (!setRunning || correct.isEmpty()) return;
+        List<String> user = revealed ? new ArrayList<>() : parseResponse(response.getText().toString(), correct);
+        Validation validation = revealed ? new Validation("REVEALED", "Answer revealed before submission", false) : validate(user, correct);
+        long elapsed = System.currentTimeMillis() - exerciseStartedAt;
+        ExerciseResult r = new ExerciseResult();
+        r.index = setIndex + 1;
+        r.length = currentMeta.length;
+        r.numbers = currentMeta.numbers;
+        r.letters = currentMeta.letters;
+        r.presented = joinObjects(sequence, " ");
+        r.expected = format(correct);
+        r.answer = revealed ? "(revealed)" : response.getText().toString().trim();
+        r.result = validation.code;
+        r.error = validation.detail;
+        r.correct = validation.correct;
+        r.elapsedMs = elapsed;
+        results.add(r);
+        saveProgress(r);
+        correct.clear();
+        setIndex++;
+        updateStats();
+        renderSummary();
+        handler.postDelayed(this::startNextExercise, 350);
+    }
+
+    private Validation validate(List<String> user, List<String> expected) {
+        if (user.equals(expected)) return new Validation("CORRECT", "No error", true);
+
+        Map<String, Integer> u = counts(user);
+        Map<String, Integer> e = counts(expected);
+        List<String> missing = new ArrayList<>();
+        List<String> extra = new ArrayList<>();
+        for (String x : e.keySet()) for (int i = 0; i < e.get(x) - u.getOrDefault(x, 0); i++) missing.add(x);
+        for (String x : u.keySet()) for (int i = 0; i < u.get(x) - e.getOrDefault(x, 0); i++) extra.add(x);
+        if (!missing.isEmpty() || !extra.isEmpty()) {
+            String detail = (!missing.isEmpty() ? "Missing: " + String.join(", ", missing) : "") +
+                    (!missing.isEmpty() && !extra.isEmpty() ? " · " : "") +
+                    (!extra.isEmpty() ? "Extra: " + String.join(", ", extra) : "");
+            String code = !missing.isEmpty() && !extra.isEmpty() ? "MISSING_AND_EXTRA_ITEMS" : !missing.isEmpty() ? "MISSING_ITEM" : "EXTRA_ITEM";
+            return new Validation(code, detail, false);
+        }
+
+        List<String> un = filterNumbers(user), en = filterNumbers(expected);
+        List<String> ul = filterLetters(user), el = filterLetters(expected);
+        boolean numbersOk = un.equals(en), lettersOk = ul.equals(el);
+        if (!numbersOk && !lettersOk) return new Validation("WRONG_ORDER", "Both number and letter queues are ordered incorrectly", false);
+        if (!numbersOk) return new Validation("WRONG_ORDER", "Number queue ordered incorrectly: " + String.join(", ", un) + " → " + String.join(", ", en), false);
+        if (!lettersOk) return new Validation("WRONG_ORDER", "Letter queue ordered incorrectly: " + String.join(", ", ul) + " → " + String.join(", ", el), false);
+        return new Validation("WRONG_GROUP", "Correct items, but numbers must come before letters", false);
+    }
+
+    private ExerciseMeta generateExercise() {
+        int max = clamp(parseInt(maxCharacters.getText().toString(), 5), 1, 20);
+        int length = weightedLength(max);
+        String type = selected(itemType);
+        int numbers;
+        if (type.equals("Numbers only")) numbers = length;
+        else if (type.equals("Letters only")) numbers = 0;
+        else {
+            double ratio = 0.3 + numbersRatio.getSelectedItemPosition() * 0.1;
+            if (selected(focusNumbers).equals("More numbers")) ratio += .15;
+            if (selected(focusNumbers).equals("Fewer numbers")) ratio -= .15;
+            if (selected(focusLetters).equals("More letters")) ratio -= .15;
+            if (selected(focusLetters).equals("Fewer letters")) ratio += .15;
+            ratio = Math.max(.1, Math.min(.9, ratio));
+            numbers = (int)Math.round(length * ratio);
+            if (length > 1) numbers = clamp(numbers, 1, length - 1);
+        }
+        int letters = length - numbers;
+        int nr = numberRangeMax();
+        numbers = Math.min(numbers, nr);
+        letters = Math.min(letters, 26);
+        length = numbers + letters;
+
+        List<Integer> numberPool = new ArrayList<>();
+        for (int i = 1; i <= nr; i++) numberPool.add(i);
+        Collections.shuffle(numberPool, random);
+        List<String> letterPool = new ArrayList<>();
+        for (char c : LETTERS.toCharArray()) letterPool.add(applyLetterCase(String.valueOf(c)));
+        Collections.shuffle(letterPool, random);
+
+        List<Object> values = new ArrayList<>();
+        for (int i = 0; i < numbers; i++) values.add(numberPool.get(i));
+        for (int i = 0; i < letters; i++) values.add(letterPool.get(i));
+        Collections.shuffle(values, random);
+        return new ExerciseMeta(values, length, numbers, letters);
+    }
+
+    private int weightedLength(int max) {
+        String focus = selected(focusLength);
+        if (focus.equals("Mostly maximum length") && random.nextDouble() < .75) return max;
+        if (focus.equals("Balanced")) return random.nextInt(max) + 1;
+        int total = max * (max + 1) / 2;
+        int roll = random.nextInt(total) + 1;
+        int acc = 0;
+        for (int len = 1; len <= max; len++) {
+            int weight = focus.equals("More short exercises") ? max - len + 1 : len;
+            acc += weight;
+            if (roll <= acc) return len;
+        }
+        return max;
+    }
+
+    private List<String> determineCorrect(List<Object> seq) {
+        List<Integer> nums = new ArrayList<>();
+        List<String> lets = new ArrayList<>();
+        for (Object x : seq) {
+            if (x instanceof Integer) nums.add((Integer)x);
+            else lets.add(String.valueOf(x).toUpperCase(Locale.ROOT));
+        }
+        Collections.sort(nums);
+        Collections.sort(lets);
+        List<String> out = new ArrayList<>();
+        for (Integer n : nums) out.add(String.valueOf(n));
+        out.addAll(lets);
+        return out;
+    }
+
+    private List<String> parseResponse(String raw, List<String> expected) {
+        String sep = separatorValue();
+        List<String> out = new ArrayList<>();
+        if (sep.isEmpty()) return parseCompact(raw, expected);
+        String regex = sep.equals(" ") ? "\\s+" : sep.equals("-") ? "\\s*-\\s*" : "\\s*,\\s*";
+        for (String p : raw.trim().split(regex)) if (!p.trim().isEmpty()) out.add(p.trim().toUpperCase(Locale.ROOT));
+        return out;
+    }
+
+    private List<String> parseCompact(String raw, List<String> expected) {
+        String compact = raw.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+        if (compact.equals(String.join("", expected))) return new ArrayList<>(expected);
+        List<String> result = new ArrayList<>();
+        int i = 0;
+        List<String> nums = filterNumbers(expected);
+        nums.sort((a,b) -> Integer.compare(b.length(), a.length()));
+        while (i < compact.length()) {
+            char c = compact.charAt(i);
+            if (Character.isLetter(c)) { result.add(String.valueOf(c)); i++; continue; }
+            boolean matched = false;
+            for (String n : nums) if (compact.startsWith(n, i)) { result.add(n); i += n.length(); matched = true; break; }
+            if (!matched) { result.add(String.valueOf(c)); i++; }
+        }
+        return result;
+    }
+
+    private void speak(Object value) {
+        if (tts == null) return;
+        Locale locale = Locale.forLanguageTag(selectedLanguage(presentationLanguage));
+        tts.setLanguage(locale);
+        String spoken = String.valueOf(value);
+        if (locale.getLanguage().equals("it") && spoken.equalsIgnoreCase("Y")) spoken = "Ypsilon";
+        tts.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "item");
+    }
+
+    @Override public void onInit(int statusCode) {
+        if (statusCode == TextToSpeech.SUCCESS && tts != null) tts.setSpeechRate(1.0f);
+    }
+
+    private void finishSet() {
+        setRunning = false;
+        presenting = false;
+        startSet.setEnabled(true);
+        stopSet.setVisibility(View.GONE);
+        responseArea.setVisibility(View.GONE);
+        counter.setText(results.size() + " exercises completed");
+        status.setText("Set complete.");
+        updateStats();
+        renderSummary();
+        renderProgress();
+    }
+
+    private void stopSet() {
+        stopSetInternal();
+        status.setText("Set stopped.");
+        updateStats();
+        renderSummary();
+    }
+
+    private void stopSetInternal() {
+        setRunning = false;
+        presenting = false;
+        handler.removeCallbacksAndMessages(null);
+        if (tts != null) tts.stop();
+        if (speechRecognizer != null) try { speechRecognizer.cancel(); } catch (Exception ignored) {}
+        fingerDown = false;
+        startSet.setEnabled(true);
+        stopSet.setVisibility(View.GONE);
+        nextItem.setVisibility(View.GONE);
+        holdToSpeak.setText("🎙 Hold to speak");
+    }
