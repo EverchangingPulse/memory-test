@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = 'DualQueueRunningInsertion'
+rootProject.name = 'MemSort'
 include ':app'
