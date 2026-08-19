@@ -1,44 +1,19 @@
-                case MotionEvent.ACTION_CANCEL:
-                    fingerDown = false;
-                    v.setPressed(false);
-                    holdToSpeak.setText("🎙 Hold to speak");
-                    stopNativeVoiceAnswer(false);
-                    return true;
-                default:
-                    return true;
-            }
-        });
-        responseArea.addView(holdToSpeak);
-
-        reveal = button("Reveal");
-        reveal.setOnClickListener(v -> submitAnswer(true));
-        responseArea.addView(reveal);
-        exercise.addView(responseArea);
-
-        LinearLayout stats = card();
-        root.addView(stats);
-        stats.addView(text("Set statistics", 20, true));
-        setStats = text("Correct: 0/0 · Accuracy: 0% · Average: 0.0 s · Total: 0.0 s", 15, false);
-        classification = text("No completed exercises yet.", 14, false);
-        stats.addView(setStats);
-        stats.addView(classification);
-
-        LinearLayout summary = card();
-        root.addView(summary);
-        summary.addView(text("Set summary", 20, true));
-        HorizontalScrollView hsv = new HorizontalScrollView(this);
-        summaryTable = new TableLayout(this);
-        hsv.addView(summaryTable);
-        summary.addView(hsv);
-        renderSummary();
-
-        LinearLayout progress = card();
-        root.addView(progress);
-        progress.addView(text("Long-term progress", 20, true));
-        longTermProgress = text("No saved exercises yet.", 14, false);
-        progress.addView(longTermProgress);
-
-        return scroll;
+                fingerDown = false;
+                button.setPressed(false);
+                setHoldButtonState(false, true, false);
+                stopNativeVoiceAnswer(true);
+                button.performClick();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                button.getParent().requestDisallowInterceptTouchEvent(false);
+                fingerDown = false;
+                button.setPressed(false);
+                setHoldButtonState(false, false, false);
+                stopNativeVoiceAnswer(false);
+                return true;
+            default:
+                return true;
+        }
     }
 
     private void setupSpeechRecognizer() {
@@ -62,31 +37,47 @@
 
         speechRecognizer.setRecognitionListener(new RecognitionListener() {
             @Override public void onReadyForSpeech(Bundle params) {
+                recognizerStarting = false;
                 listening = true;
-                status.setText("Listening while your finger is down…");
+                status.setText("Recording… keep your finger down while speaking.");
             }
-            @Override public void onBeginningOfSpeech() {}
+            @Override public void onBeginningOfSpeech() {
+                status.setText("Recording your answer…");
+            }
             @Override public void onRmsChanged(float rmsdB) {}
             @Override public void onBufferReceived(byte[] buffer) {}
             @Override public void onEndOfSpeech() {
                 listening = false;
+                if (submitAfterListening) {
+                    status.setText("Processing your answer…");
+                }
             }
             @Override public void onError(int error) {
                 listening = false;
-                if (!fingerDown) {
+                recognizerStarting = false;
+                if (submitAfterListening && !resultsDelivered) {
                     finishVoiceSubmit();
+                    return;
+                }
+                if (fingerDown) {
+                    status.setText("Listening… keep holding and speak clearly.");
                 } else {
-                    status.setText("Voice recognizer paused; keep holding or release to retry.");
+                    status.setText("Voice recognition stopped. Try again.");
+                    setHoldButtonState(false, false, false);
                 }
             }
             @Override public void onResults(Bundle bundle) {
                 listening = false;
+                recognizerStarting = false;
+                resultsDelivered = true;
                 ArrayList<String> matches = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (matches != null && !matches.isEmpty()) {
                     pendingTranscript = matches.get(0);
                     response.setText(normalizeSpokenAnswer(pendingTranscript));
                 }
-                if (!fingerDown) finishVoiceSubmit();
+                if (submitAfterListening) {
+                    finishVoiceSubmit();
+                }
             }
             @Override public void onPartialResults(Bundle bundle) {
                 ArrayList<String> partial = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
@@ -104,7 +95,7 @@
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION);
             fingerDown = false;
-            holdToSpeak.setText("🎙 Hold to speak");
+            setHoldButtonState(false, false, false);
             return;
         }
         if (speechRecognizer == null) {
@@ -118,41 +109,97 @@
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, selectedLanguage(answerLanguage));
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 800L);
+
+        submitAfterListening = false;
+        resultsDelivered = false;
+        recognizerStarting = true;
+        try {
+            speechRecognizer.cancel();
+        } catch (Exception ignored) {}
         try {
             speechRecognizer.startListening(recognizerIntent);
-            status.setText("Finger down detected. Starting microphone…");
+            status.setText("Starting microphone… keep your finger down.");
         } catch (Exception ex) {
+            recognizerStarting = false;
             status.setText("Could not start voice recognition: " + ex.getMessage());
+            setHoldButtonState(false, false, false);
         }
     }
 
     private void stopNativeVoiceAnswer(boolean submitWhenReady) {
         if (speechRecognizer == null) {
-            holdToSpeak.setText("🎙 Hold to speak");
+            setHoldButtonState(false, false, false);
             return;
         }
+
+        submitAfterListening = submitWhenReady;
+
         try {
             if (submitWhenReady) {
-                speechRecognizer.stopListening();
+                long heldMs = System.currentTimeMillis() - pressStartedAt;
+                long extraDelay = heldMs < 250 ? (250 - heldMs) : 0;
                 handler.postDelayed(() -> {
-                    if (!fingerDown && setRunning && !correct.isEmpty()) finishVoiceSubmit();
-                }, 900);
+                    try {
+                        if (speechRecognizer != null) speechRecognizer.stopListening();
+                    } catch (Exception ignored) {}
+                    handler.postDelayed(() -> {
+                        if (!fingerDown && submitAfterListening && !resultsDelivered) {
+                            finishVoiceSubmit();
+                        }
+                    }, 1100);
+                }, extraDelay);
             } else {
+                submitAfterListening = false;
                 speechRecognizer.cancel();
+                setHoldButtonState(false, false, false);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+            if (submitWhenReady) finishVoiceSubmit();
+        }
     }
 
     private void finishVoiceSubmit() {
-        holdToSpeak.setText("🎙 Hold to speak");
+        submitAfterListening = false;
+        setHoldButtonState(false, false, false);
         String value = response.getText().toString().trim();
         if (value.isEmpty()) {
             status.setText("No speech recognized. Hold and try again.");
             return;
         }
-        if (setRunning && !correct.isEmpty()) submitAnswer(false);
+        if (setRunning && !correct.isEmpty()) {
+            status.setText("Voice answer received.");
+            submitAnswer(false);
+        }
+    }
+
+    private void setHoldButtonState(boolean holding, boolean processing, boolean disabled) {
+        if (holdToSpeak == null) return;
+        if (disabled) {
+            holdToSpeak.setEnabled(false);
+            holdToSpeak.setText("Voice recognition unavailable");
+            holdToSpeak.setBackground(buildButtonFill(Color.parseColor("#CBD5E1"), Color.parseColor("#CBD5E1")));
+            return;
+        }
+
+        holdToSpeak.setEnabled(true);
+        if (processing) {
+            holdToSpeak.setText("⏳ Processing answer…");
+            holdToSpeak.setBackground(buildButtonFill(Color.parseColor("#F59E0B"), Color.parseColor("#D97706")));
+            holdToSpeak.setTextColor(Color.WHITE);
+        } else if (holding) {
+            holdToSpeak.setText("🔴 Recording — lift to send");
+            holdToSpeak.setBackground(buildButtonFill(Color.parseColor("#EF4444"), Color.parseColor("#DC2626")));
+            holdToSpeak.setTextColor(Color.WHITE);
+        } else {
+            holdToSpeak.setText("🎙  Hold to speak");
+            holdToSpeak.setBackground(buildButtonFill(COLOR_SUCCESS, Color.parseColor("#15803D")));
+            holdToSpeak.setTextColor(Color.WHITE);
+        }
     }
 
     private String normalizeSpokenAnswer(String transcript) {
@@ -214,7 +261,3 @@
         handler.postDelayed(this::presentNext, 250);
     }
 
-    private void presentNext() {
-        if (!setRunning || !presenting) return;
-        if (sequenceIndex >= sequence.size()) {
-            finishPresentation();
