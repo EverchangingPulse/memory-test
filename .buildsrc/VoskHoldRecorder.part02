@@ -1,0 +1,61 @@
+    private fun languageDisplayName(languageTag: String): String = when (modelCode(languageTag)) {
+        "it" -> "Italian"
+        "fr" -> "French"
+        "es" -> "Spanish"
+        "de" -> "German"
+        "ja" -> "Japanese"
+        else -> "English"
+    }
+
+    fun onPermissionResult(requestCode: Int, grantResults: IntArray): Boolean {
+        if (requestCode != REQUEST_RECORD_AUDIO) return false
+        status.text = if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            "Microphone permission granted. Hold the button to speak."
+        } else {
+            "Microphone permission is required for voice answers."
+        }
+        return true
+    }
+
+    fun onPause() {
+        holding = false
+        stopAndShutdown(commit = false)
+    }
+
+    fun onStop() {
+        holding = false
+        stopAndShutdown(commit = false)
+    }
+
+    fun destroy() {
+        holding = false
+        stopAndShutdown(commit = false)
+        releaseRecognizer()
+        try { model?.close() } catch (_: Exception) {}
+        model = null
+        scope.cancel()
+    }
+
+    private fun releaseRecognizer() {
+        try { recognizer?.close() } catch (_: Exception) {}
+        recognizer = null
+    }
+
+    private data class RecognitionVocabulary(
+        val spokenToToken: Map<String, String>,
+        val phrasesByLength: List<Pair<List<String>, String>>,
+        val grammarJson: String,
+        val description: String
+    ) {
+        companion object {
+            fun empty() = RecognitionVocabulary(emptyMap(), emptyList(), "[]", "letters or numbers")
+        }
+    }
+
+    companion object {
+        private const val SAMPLE_RATE = 16_000.0f
+        private const val REQUEST_RECORD_AUDIO = 1001
+        private const val READY_MARKER = ".ready"
+        private const val FINAL_FALLBACK_DELAY_MS = 350L
+    }
+}
