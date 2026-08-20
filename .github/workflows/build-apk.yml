@@ -41,6 +41,10 @@ jobs:
           cat .buildsrc/MainActivity.part* > app/src/main/java/com/example/dualqueue/MainActivity.java
           cat .buildsrc/VoskHoldRecorder.part* > app/src/main/java/com/example/dualqueue/VoskHoldRecorder.kt
           python3 .buildsrc/patch_memsort_vosk.py
+          grep -F 'Progressive (1 → maximum)' app/src/main/java/com/example/dualqueue/MainActivity.java
+          grep -F 'numberRangeMin()' app/src/main/java/com/example/dualqueue/MainActivity.java
+          grep -F 'Reverse alphabetical' app/src/main/java/com/example/dualqueue/MainActivity.java
+          grep -F 'isCorrectAnswer' app/src/main/java/com/example/dualqueue/MainActivity.java
 
       - name: Bundle multilingual Vosk mobile models
         run: |
@@ -78,6 +82,7 @@ jobs:
       - name: Verify APK package metadata
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging app/build/outputs/apk/release/app-release.apk | head -30
+          du -h app/build/outputs/apk/release/app-release.apk
 
       - name: Verify all Vosk models packaged
         run: |
@@ -88,7 +93,7 @@ jobs:
       - name: Upload MemSort APK
         uses: actions/upload-artifact@v4
         with:
-          name: MemSort-v1.4-mode-constrained-signed-apk
+          name: MemSort-v1.5-signed-apk
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
