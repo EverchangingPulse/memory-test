@@ -42,6 +42,30 @@ java.write_text(s)
 
 kotlin = Path('app/src/main/java/com/example/dualqueue/VoskHoldRecorder.kt')
 k = kotlin.read_text()
-k = re.sub(r'(status\.text\s*=\s*)([^\n]+)', lambda m: m.group(1) + 'AppStrings.t(' + m.group(2).rstrip() + ')', k)
-k = re.sub(r'(holdButton\.text\s*=\s*)([^\n]+)', lambda m: m.group(1) + 'AppStrings.t(' + m.group(2).rstrip() + ')', k)
+
+permission_block = '''        status.text = if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            "Microphone permission granted. Hold the button to speak."
+        } else {
+            "Microphone permission is required for voice answers."
+        }'''
+localized_permission_block = '''        status.text = AppStrings.t(if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            "Microphone permission granted. Hold the button to speak."
+        } else {
+            "Microphone permission is required for voice answers."
+        })'''
+k = k.replace(permission_block, localized_permission_block, 1)
+
+safe_status = re.compile(r'^(\s*status\.text\s*=\s*)(?!if\s*\{?)(?!if\s*\()(.+)$', re.MULTILINE)
+safe_button = re.compile(r'^(\s*holdButton\.text\s*=\s*)(.+)$', re.MULTILINE)
+
+def wrap(match):
+    rhs = match.group(2).rstrip()
+    if rhs.startswith('AppStrings.t('):
+        return match.group(0)
+    if rhs.endswith('{'):
+        return match.group(0)
+    return match.group(1) + 'AppStrings.t(' + rhs + ')'
+
+k = safe_status.sub(wrap, k)
+k = safe_button.sub(wrap, k)
 kotlin.write_text(k)
