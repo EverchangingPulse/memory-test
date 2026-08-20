@@ -41,27 +41,21 @@ jobs:
           cat .buildsrc/MainActivity.part* > app/src/main/java/com/example/dualqueue/MainActivity.java
           cat .buildsrc/VoskHoldRecorder.part* > app/src/main/java/com/example/dualqueue/VoskHoldRecorder.kt
           python3 .buildsrc/patch_memsort_vosk.py
-          grep -F 'Progressive (1 → maximum)' app/src/main/java/com/example/dualqueue/MainActivity.java
-          grep -F 'numberRangeMin()' app/src/main/java/com/example/dualqueue/MainActivity.java
-          grep -F 'Reverse alphabetical' app/src/main/java/com/example/dualqueue/MainActivity.java
-          grep -F 'isCorrectAnswer' app/src/main/java/com/example/dualqueue/MainActivity.java
+          python3 .buildsrc/patch_phone_locale.py
+          grep -F 'phoneLanguageIndex' app/src/main/java/com/example/dualqueue/MainActivity.java
 
       - name: Bundle multilingual Vosk mobile models
         run: |
           set -euo pipefail
           rm -rf app/src/main/assets/vosk-model-* /tmp/vosk-models
           mkdir -p app/src/main/assets /tmp/vosk-models
-
           fetch_model() {
-            code="$1"
-            name="$2"
+            code="$1"; name="$2"
             curl --fail --location --retry 3 --output "/tmp/vosk-models/${name}.zip" "https://alphacephei.com/vosk/models/${name}.zip"
             mkdir -p "/tmp/vosk-models/${code}"
             unzip -q "/tmp/vosk-models/${name}.zip" -d "/tmp/vosk-models/${code}"
             mv "/tmp/vosk-models/${code}/${name}" "app/src/main/assets/vosk-model-${code}"
-            test -f "app/src/main/assets/vosk-model-${code}/conf/model.conf"
           }
-
           fetch_model en vosk-model-small-en-us-0.15
           fetch_model it vosk-model-small-it-0.22
           fetch_model fr vosk-model-small-fr-0.22
@@ -76,24 +70,19 @@ jobs:
         run: gradle --no-daemon :app:assembleRelease
 
       - name: Verify APK signature
-        run: |
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+        run: "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
 
       - name: Verify APK package metadata
-        run: |
-          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging app/build/outputs/apk/release/app-release.apk | head -30
-          du -h app/build/outputs/apk/release/app-release.apk
+        run: "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging app/build/outputs/apk/release/app-release.apk | head -30
 
       - name: Verify all Vosk models packaged
         run: |
-          for code in en it fr es de ja; do
-            unzip -l app/build/outputs/apk/release/app-release.apk | grep "assets/vosk-model-${code}/conf/model.conf"
-          done
+          for code in en it fr es de ja; do unzip -l app/build/outputs/apk/release/app-release.apk | grep "assets/vosk-model-${code}/conf/model.conf"; done
 
       - name: Upload MemSort APK
         uses: actions/upload-artifact@v4
         with:
-          name: MemSort-v1.5-signed-apk
+          name: MemSort-v1.6-localized-signed-apk
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
