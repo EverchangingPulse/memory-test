@@ -10,8 +10,17 @@ source = source.replace(
 
 source = source.replace(
     '        setupSpeechRecognizer();\n        renderProgress();',
-    '        voskHoldRecorder = new VoskHoldRecorder(this, holdToSpeak, response, status, this::normalizeSpokenAnswer, () -> {\n'
-    '            if (setRunning && !correct.isEmpty()) submitAnswer(false);\n'
+    '        voskHoldRecorder = new VoskHoldRecorder(\n'
+    '                this, holdToSpeak, response, status,\n'
+    '                () -> selectedLanguage(answerLanguage),\n'
+    '                () -> new ArrayList<>(correct),\n'
+    '                this::normalizeSpokenAnswer,\n'
+    '                () -> { if (setRunning && !correct.isEmpty()) submitAnswer(false); });\n'
+    '        answerLanguage.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {\n'
+    '            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {\n'
+    '                if (voskHoldRecorder != null) voskHoldRecorder.onLanguageChanged(selectedLanguage(answerLanguage));\n'
+    '            }\n'
+    '            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}\n'
     '        });\n'
     '        renderProgress();'
 )

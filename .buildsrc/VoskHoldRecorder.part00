@@ -1,0 +1,321 @@
+package com.example.dualqueue
+
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
+import android.view.MotionEvent
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.RecognitionListener
+import org.vosk.android.SpeechService
+import java.io.File
+import java.io.FileOutputStream
+import java.text.Normalizer
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.function.Function
+import java.util.function.Supplier
+
+class VoskHoldRecorder(
+    private val activity: Activity,
+    private val holdButton: Button,
+    private val input: EditText,
+    private val status: TextView,
+    private val languageSupplier: Supplier<String>,
+    private val expectedSupplier: Supplier<List<String>>,
+    private val normalizer: Function<String, String>,
+    private val onCommitted: Runnable
+) : RecognitionListener {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val committed = AtomicBoolean(false)
+
+    @Volatile private var model: Model? = null
+    @Volatile private var modelLanguage = ""
+    @Volatile private var loadingLanguage = ""
+
+    private var recognizer: Recognizer? = null
+    private var speechService: SpeechService? = null
+    private var holding = false
+    private var lastPartial = ""
+    private var lastResult = ""
+    private var currentVocabulary = RecognitionVocabulary.empty()
+
+    init {
+        bindHoldGesture()
+        onLanguageChanged(languageSupplier.get())
+    }
+
+    private fun bindHoldGesture() {
+        holdButton.setOnClickListener(null)
+        holdButton.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                    holding = true
+                    committed.set(false)
+                    lastPartial = ""
+                    lastResult = ""
+                    holdButton.isPressed = true
+                    holdButton.text = "🔴 Recording — lift to send"
+
+                    if (!hasAudioPermission()) {
+                        holding = false
+                        holdButton.isPressed = false
+                        holdButton.text = "🎙  Hold to speak"
+                        activity.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_RECORD_AUDIO)
+                        return@setOnTouchListener true
+                    }
+
+                    val languageTag = languageSupplier.get()
+                    val readyModel = model
+                    if (readyModel == null || modelLanguage != languageTag) {
+                        holding = false
+                        holdButton.isPressed = false
+                        holdButton.text = "Loading ${languageDisplayName(languageTag)}…"
+                        status.text = "Preparing ${languageDisplayName(languageTag)} voice recognition. Hold again when ready."
+                        loadModelAsync(languageTag)
+                        return@setOnTouchListener true
+                    }
+
+                    val expected = expectedSupplier.get().orEmpty()
+                    if (expected.isEmpty()) {
+                        holding = false
+                        holdButton.isPressed = false
+                        holdButton.text = "🎙  Hold to speak"
+                        status.text = "No active answer to recognize."
+                        return@setOnTouchListener true
+                    }
+
+                    currentVocabulary = buildVocabulary(languageTag, expected)
+                    if (currentVocabulary.spokenToToken.isEmpty()) {
+                        holding = false
+                        holdButton.isPressed = false
+                        holdButton.text = "🎙  Hold to speak"
+                        status.text = "No valid voice vocabulary could be created for this exercise."
+                        return@setOnTouchListener true
+                    }
+
+                    startListening(readyModel, currentVocabulary)
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+                    holding = false
+                    holdButton.isPressed = false
+                    holdButton.text = "⏳ Transcribing…"
+                    stopAndShutdown(commit = true)
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+                    holding = false
+                    holdButton.isPressed = false
+                    holdButton.text = "🎙  Hold to speak"
+                    stopAndShutdown(commit = false)
+                    true
+                }
+
+                else -> true
+            }
+        }
+    }
+
+    private fun hasAudioPermission(): Boolean =
+        activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun startListening(readyModel: Model, vocabulary: RecognitionVocabulary) {
+        releaseRecognizer()
+        try {
+            recognizer = Recognizer(readyModel, SAMPLE_RATE, vocabulary.grammarJson)
+            speechService = SpeechService(recognizer, SAMPLE_RATE).also { service ->
+                service.startListening(this)
+            }
+            status.text = "Listening in ${languageDisplayName(modelLanguage)} — only ${vocabulary.description} are accepted."
+        } catch (error: Exception) {
+            status.text = "Could not start Vosk: ${error.message ?: "unknown error"}"
+            holdButton.text = "🎙  Hold to speak"
+            holding = false
+            releaseRecognizer()
+        }
+    }
+
+    private fun stopAndShutdown(commit: Boolean) {
+        val service = speechService
+        speechService = null
+
+        if (service == null) {
+            if (commit) commitBestAvailableText()
+            return
+        }
+
+        try { service.stop() } catch (_: Exception) {}
+        try { service.shutdown() } catch (_: Exception) {}
+
+        if (commit) {
+            mainHandler.postDelayed({ commitBestAvailableText() }, FINAL_FALLBACK_DELAY_MS)
+        } else {
+            committed.set(true)
+            releaseRecognizer()
+            status.text = "Recording cancelled."
+        }
+    }
+
+    override fun onPartialResult(hypothesis: String?) {
+        val partial = extractJson(hypothesis, "partial")
+        if (partial.isBlank()) return
+        lastPartial = partial
+        activity.runOnUiThread {
+            if (holding) {
+                val filtered = canonicalizeRecognizedText(partial)
+                status.text = if (filtered.isBlank()) "Listening…" else filtered
+            }
+        }
+    }
+
+    override fun onResult(hypothesis: String?) {
+        val text = extractJson(hypothesis, "text")
+        if (text.isNotBlank()) lastResult = text
+    }
+
+    override fun onFinalResult(hypothesis: String?) {
+        val text = extractJson(hypothesis, "text")
+        if (text.isNotBlank()) lastResult = text
+        activity.runOnUiThread { commitBestAvailableText() }
+    }
+
+    override fun onError(exception: Exception?) {
+        activity.runOnUiThread {
+            if (!committed.get()) {
+                if (!holding) commitBestAvailableText()
+                else status.text = "Voice recognition error: ${exception?.message ?: "unknown error"}"
+            }
+        }
+    }
+
+    override fun onTimeout() {
+        activity.runOnUiThread {
+            if (!holding) commitBestAvailableText()
+            else status.text = "No valid letter or number detected yet…"
+        }
+    }
+
+    private fun commitBestAvailableText() {
+        if (!committed.compareAndSet(false, true)) return
+
+        val raw = when {
+            lastResult.isNotBlank() -> lastResult
+            lastPartial.isNotBlank() -> lastPartial
+            else -> ""
+        }
+
+        val canonical = canonicalizeRecognizedText(raw)
+        if (canonical.isBlank()) {
+            status.text = "No valid ${currentVocabulary.description} recognized."
+            holdButton.text = "🎙  Hold to speak"
+            releaseRecognizer()
+            return
+        }
+
+        val normalized = normalizer.apply(canonical).trim()
+        if (normalized.isBlank()) {
+            status.text = "No valid ${currentVocabulary.description} recognized."
+            holdButton.text = "🎙  Hold to speak"
+            releaseRecognizer()
+            return
+        }
+
+        input.setText(normalized)
+        input.setSelection(normalized.length)
+        status.text = "Voice answer: $normalized"
+        holdButton.text = "🎙  Hold to speak"
+        releaseRecognizer()
+        onCommitted.run()
+    }
+
+    private fun canonicalizeRecognizedText(raw: String): String {
+        if (raw.isBlank()) return ""
+        val normalized = normalizePhrase(raw)
+        if (normalized.isBlank()) return ""
+        val words = normalized.split(' ').filter { it.isNotBlank() }
+        if (words.isEmpty()) return ""
+
+        val matches = currentVocabulary.phrasesByLength
+        val output = mutableListOf<String>()
+        var index = 0
+        while (index < words.size) {
+            var matchedToken: String? = null
+            var matchedLength = 0
+            for ((phraseWords, token) in matches) {
+                if (phraseWords.size <= matchedLength || index + phraseWords.size > words.size) continue
+                var same = true
+                for (offset in phraseWords.indices) {
+                    if (words[index + offset] != phraseWords[offset]) {
+                        same = false
+                        break
+                    }
+                }
+                if (same) {
+                    matchedToken = token
+                    matchedLength = phraseWords.size
+                }
+            }
+            if (matchedToken != null) {
+                output += matchedToken
+                index += matchedLength
+            } else {
+                index++
+            }
+        }
+        return output.joinToString(" ")
+    }
+
+    private fun extractJson(hypothesis: String?, key: String): String {
+        if (hypothesis.isNullOrBlank()) return ""
+        return try { JSONObject(hypothesis).optString(key).trim() } catch (_: Exception) { "" }
+    }
+
+    fun onLanguageChanged(languageTag: String) {
+        if (holding) return
+        if (modelLanguage == languageTag && model != null) return
+        loadModelAsync(languageTag)
+    }
+
+    private fun loadModelAsync(languageTag: String) {
+        if (loadingLanguage == languageTag) return
+        loadingLanguage = languageTag
+        holdButton.isEnabled = false
+        holdButton.text = "Loading ${languageDisplayName(languageTag)}…"
+        status.text = "Preparing offline ${languageDisplayName(languageTag)} Vosk model…"
+
+        scope.launch {
+            try {
+                val loaded = withContext(Dispatchers.IO) {
+                    val modelDir = prepareModelDirectory(languageTag)
+                    Model(modelDir.absolutePath)
+                }
+                if (loadingLanguage != languageTag) {
+                    loaded.close()
+                    return@launch
+                }
+                val old = model
+                model = loaded
+                modelLanguage = languageTag
+                loadingLanguage = ""
+                try { old?.close() } catch (_: Exception) {}

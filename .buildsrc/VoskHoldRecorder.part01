@@ -1,0 +1,230 @@
+                holdButton.isEnabled = true
+                holdButton.text = "🎙  Hold to speak"
+                status.text = "Offline ${languageDisplayName(languageTag)} voice recognition ready."
+            } catch (error: Exception) {
+                if (loadingLanguage == languageTag) {
+                    loadingLanguage = ""
+                    modelLanguage = ""
+                    try { model?.close() } catch (_: Exception) {}
+                    model = null
+                    holdButton.isEnabled = false
+                    holdButton.text = "Voice model unavailable"
+                    status.text = "Could not load ${languageDisplayName(languageTag)} Vosk model: ${error.message ?: "unknown error"}"
+                }
+            }
+        }
+    }
+
+    private fun prepareModelDirectory(languageTag: String): File {
+        val code = modelCode(languageTag)
+        val assetPath = "vosk-model-$code"
+        val target = File(activity.filesDir, "vosk-model-$code")
+        val ready = File(target, READY_MARKER)
+        if (target.isDirectory && ready.isFile) return target
+
+        if (target.exists()) target.deleteRecursively()
+        target.mkdirs()
+        copyAssetTree(assetPath, target)
+        ready.createNewFile()
+        return target
+    }
+
+    private fun copyAssetTree(assetPath: String, target: File) {
+        val children = activity.assets.list(assetPath) ?: error("Missing asset: $assetPath")
+        if (children.isEmpty()) {
+            target.parentFile?.mkdirs()
+            activity.assets.open(assetPath).use { inputStream ->
+                FileOutputStream(target).use { outputStream -> inputStream.copyTo(outputStream) }
+            }
+            return
+        }
+
+        target.mkdirs()
+        children.forEach { child -> copyAssetTree("$assetPath/$child", File(target, child)) }
+    }
+
+    private fun buildVocabulary(languageTag: String, expected: List<String>): RecognitionVocabulary {
+        val cleanedExpected = expected.map { it.trim().uppercase(Locale.ROOT) }.filter { it.matches(Regex("(?:\\d{1,2}|[A-Z])")) }.distinct()
+        val phraseMap = linkedMapOf<String, String>()
+
+        cleanedExpected.forEach { token ->
+            spokenVariants(languageTag, token).forEach { spoken ->
+                val normalized = normalizePhrase(spoken)
+                if (normalized.isNotBlank()) phraseMap[normalized] = token
+            }
+        }
+
+        val phrases = phraseMap.keys.toList()
+        val grammar = linkedSetOf<String>()
+        grammar.addAll(phrases)
+        for (first in phrases) {
+            for (second in phrases) {
+                grammar += "$first $second"
+            }
+        }
+
+        val hasNumbers = cleanedExpected.any { it.firstOrNull()?.isDigit() == true }
+        val hasLetters = cleanedExpected.any { it.length == 1 && it[0] in 'A'..'Z' }
+        val description = when {
+            hasNumbers && hasLetters -> "letters and numbers"
+            hasNumbers -> "numbers"
+            else -> "letters"
+        }
+
+        val ordered = phraseMap.entries
+            .map { entry -> normalizePhrase(entry.key).split(' ').filter { it.isNotBlank() } to entry.value }
+            .sortedByDescending { it.first.size }
+
+        return RecognitionVocabulary(phraseMap, ordered, JSONArray(grammar.toList()).toString(), description)
+    }
+
+    private fun spokenVariants(languageTag: String, token: String): Set<String> {
+        if (token.matches(Regex("\\d{1,2}"))) {
+            val number = token.toInt()
+            return numberVariants(languageTag, number) + token
+        }
+        if (token.length == 1 && token[0] in 'A'..'Z') {
+            return letterVariants(languageTag, token[0]) + token.lowercase(Locale.ROOT)
+        }
+        return emptySet()
+    }
+
+    private fun numberVariants(languageTag: String, number: Int): Set<String> {
+        val language = languageTag.substringBefore('-').lowercase(Locale.ROOT)
+        val values = linkedSetOf<String>()
+        when (language) {
+            "it" -> values += italianNumber(number)
+            "fr" -> values += frenchNumber(number)
+            "es" -> values += spanishNumber(number)
+            "de" -> values += germanNumber(number)
+            "ja" -> {
+                values += japaneseNumberHiragana(number)
+                values += japaneseNumberKanji(number)
+                values += japaneseNumberHiragana(number).replace(" ", "")
+            }
+            else -> values += englishNumber(number)
+        }
+        return values.filter { it.isNotBlank() }.toSet()
+    }
+
+    private fun letterVariants(languageTag: String, letter: Char): Set<String> {
+        val language = languageTag.substringBefore('-').lowercase(Locale.ROOT)
+        val index = letter - 'A'
+        val names = when (language) {
+            "it" -> arrayOf("a", "bi", "ci", "di", "e", "effe", "gi", "acca", "i", "i lunga", "cappa", "elle", "emme", "enne", "o", "pi", "cu", "erre", "esse", "ti", "u", "vi", "doppia vu", "ics", "ipsilon", "zeta")
+            "fr" -> arrayOf("a", "bé", "cé", "dé", "e", "effe", "gé", "ache", "i", "ji", "ka", "elle", "aime", "enne", "o", "pé", "ku", "erre", "esse", "té", "u", "vé", "double vé", "iks", "i grec", "zède")
+            "es" -> arrayOf("a", "be", "ce", "de", "e", "efe", "ge", "hache", "i", "jota", "ka", "ele", "eme", "ene", "o", "pe", "cu", "erre", "ese", "te", "u", "uve", "uve doble", "equis", "ye", "zeta")
+            "de" -> arrayOf("a", "be", "tse", "de", "e", "ef", "ge", "ha", "i", "jot", "ka", "el", "em", "en", "o", "pe", "ku", "er", "es", "te", "u", "fau", "we", "iks", "ypsilon", "zett")
+            "ja" -> arrayOf("エー", "ビー", "シー", "ディー", "イー", "エフ", "ジー", "エイチ", "アイ", "ジェー", "ケー", "エル", "エム", "エヌ", "オー", "ピー", "キュー", "アール", "エス", "ティー", "ユー", "ブイ", "ダブリュー", "エックス", "ワイ", "ゼット")
+            else -> arrayOf("ay", "bee", "see", "dee", "ee", "ef", "gee", "aitch", "eye", "jay", "kay", "el", "em", "en", "oh", "pee", "cue", "ar", "ess", "tee", "you", "vee", "double you", "ex", "why", "zee")
+        }
+        val values = linkedSetOf(names[index])
+        when {
+            language == "en" && letter == 'Z' -> values += "zed"
+            language == "it" && letter == 'J' -> values += "j lunga"
+            language == "it" && letter == 'W' -> values += "doppia v"
+            language == "it" && letter == 'Y' -> values += "ypsilon"
+            language == "fr" && letter == 'W' -> values += "double v"
+            language == "es" && letter == 'Y' -> values += "i griega"
+            language == "ja" -> values += japaneseLetterHiragana(letter)
+        }
+        return values
+    }
+
+    private fun englishNumber(n: Int): String {
+        val ones = arrayOf("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+        if (n < 20) return ones[n]
+        val tens = arrayOf("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+        return if (n % 10 == 0) tens[n / 10] else "${tens[n / 10]} ${ones[n % 10]}"
+    }
+
+    private fun italianNumber(n: Int): String {
+        val small = arrayOf("zero", "uno", "due", "tre", "quattro", "cinque", "sei", "sette", "otto", "nove", "dieci", "undici", "dodici", "tredici", "quattordici", "quindici", "sedici", "diciassette", "diciotto", "diciannove")
+        if (n < 20) return small[n]
+        val tens = arrayOf("", "", "venti", "trenta", "quaranta", "cinquanta", "sessanta", "settanta", "ottanta", "novanta")
+        val unit = n % 10
+        var base = tens[n / 10]
+        if (unit == 1 || unit == 8) base = base.dropLast(1)
+        if (unit == 0) return base
+        val suffix = if (unit == 3) "tre" else small[unit]
+        return base + suffix
+    }
+
+    private fun frenchNumber(n: Int): String {
+        val small = arrayOf("zéro", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix", "onze", "douze", "treize", "quatorze", "quinze", "seize")
+        if (n <= 16) return small[n]
+        if (n < 20) return "dix ${small[n - 10]}"
+        if (n < 70) {
+            val tens = arrayOf("", "", "vingt", "trente", "quarante", "cinquante", "soixante")
+            val t = tens[n / 10]
+            val u = n % 10
+            return when (u) { 0 -> t; 1 -> "$t et un"; else -> "$t ${small[u]}" }
+        }
+        if (n < 80) {
+            val remainder = n - 60
+            return if (remainder == 11) "soixante et onze" else "soixante ${frenchNumber(remainder)}"
+        }
+        val remainder = n - 80
+        return when (remainder) { 0 -> "quatre vingt"; else -> "quatre vingt ${frenchNumber(remainder)}" }
+    }
+
+    private fun spanishNumber(n: Int): String {
+        val small = arrayOf("cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte", "veintiuno", "veintidós", "veintitrés", "veinticuatro", "veinticinco", "veintiséis", "veintisiete", "veintiocho", "veintinueve")
+        if (n < 30) return small[n]
+        val tens = arrayOf("", "", "", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa")
+        val t = tens[n / 10]
+        return if (n % 10 == 0) t else "$t y ${small[n % 10]}"
+    }
+
+    private fun germanNumber(n: Int): String {
+        val small = arrayOf("null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn")
+        if (n < 20) return small[n]
+        val tens = arrayOf("", "", "zwanzig", "dreißig", "vierzig", "fünfzig", "sechzig", "siebzig", "achtzig", "neunzig")
+        val unit = n % 10
+        if (unit == 0) return tens[n / 10]
+        val prefix = if (unit == 1) "ein" else small[unit]
+        return "$prefix und ${tens[n / 10]}"
+    }
+
+    private fun japaneseNumberHiragana(n: Int): String {
+        val small = arrayOf("ぜろ", "いち", "に", "さん", "よん", "ご", "ろく", "なな", "はち", "きゅう")
+        if (n < 10) return small[n]
+        if (n == 10) return "じゅう"
+        val tens = n / 10
+        val unit = n % 10
+        val prefix = if (tens == 1) "じゅう" else "${small[tens]} じゅう"
+        return if (unit == 0) prefix else "$prefix ${small[unit]}"
+    }
+
+    private fun japaneseNumberKanji(n: Int): String {
+        val digits = arrayOf("〇", "一", "二", "三", "四", "五", "六", "七", "八", "九")
+        if (n < 10) return digits[n]
+        val tens = n / 10
+        val unit = n % 10
+        val prefix = if (tens == 1) "十" else "${digits[tens]}十"
+        return if (unit == 0) prefix else "$prefix${digits[unit]}"
+    }
+
+    private fun japaneseLetterHiragana(letter: Char): String {
+        val values = arrayOf("えー", "びー", "しー", "でぃー", "いー", "えふ", "じー", "えいち", "あい", "じぇー", "けー", "える", "えむ", "えぬ", "おー", "ぴー", "きゅー", "あーる", "えす", "てぃー", "ゆー", "ぶい", "だぶりゅー", "えっくす", "わい", "ぜっと")
+        return values[letter - 'A']
+    }
+
+    private fun normalizePhrase(value: String): String {
+        val lowered = value.lowercase(Locale.ROOT)
+            .replace('-', ' ')
+            .replace(Regex("[,.;:!?]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return Normalizer.normalize(lowered, Normalizer.Form.NFC)
+    }
+
+    private fun modelCode(languageTag: String): String = when (languageTag.substringBefore('-').lowercase(Locale.ROOT)) {
+        "it" -> "it"
+        "fr" -> "fr"
+        "es" -> "es"
+        "de" -> "de"
+        "ja" -> "ja"
+        else -> "en"
+    }
+

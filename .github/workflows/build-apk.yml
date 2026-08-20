@@ -39,16 +39,31 @@ jobs:
         run: |
           mkdir -p app/src/main/java/com/example/dualqueue
           cat .buildsrc/MainActivity.part* > app/src/main/java/com/example/dualqueue/MainActivity.java
+          cat .buildsrc/VoskHoldRecorder.part* > app/src/main/java/com/example/dualqueue/VoskHoldRecorder.kt
           python3 .buildsrc/patch_memsort_vosk.py
 
-      - name: Bundle Vosk English mobile model
+      - name: Bundle multilingual Vosk mobile models
         run: |
-          rm -rf app/src/main/assets/vosk-model /tmp/vosk-model
-          mkdir -p app/src/main/assets /tmp/vosk-model
-          curl --fail --location --retry 3 --output /tmp/vosk-model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-          unzip -q /tmp/vosk-model.zip -d /tmp/vosk-model
-          mv /tmp/vosk-model/vosk-model-small-en-us-0.15 app/src/main/assets/vosk-model
-          test -f app/src/main/assets/vosk-model/conf/model.conf
+          set -euo pipefail
+          rm -rf app/src/main/assets/vosk-model-* /tmp/vosk-models
+          mkdir -p app/src/main/assets /tmp/vosk-models
+
+          fetch_model() {
+            code="$1"
+            name="$2"
+            curl --fail --location --retry 3 --output "/tmp/vosk-models/${name}.zip" "https://alphacephei.com/vosk/models/${name}.zip"
+            mkdir -p "/tmp/vosk-models/${code}"
+            unzip -q "/tmp/vosk-models/${name}.zip" -d "/tmp/vosk-models/${code}"
+            mv "/tmp/vosk-models/${code}/${name}" "app/src/main/assets/vosk-model-${code}"
+            test -f "app/src/main/assets/vosk-model-${code}/conf/model.conf"
+          }
+
+          fetch_model en vosk-model-small-en-us-0.15
+          fetch_model it vosk-model-small-it-0.22
+          fetch_model fr vosk-model-small-fr-0.22
+          fetch_model es vosk-model-small-es-0.42
+          fetch_model de vosk-model-small-de-0.15
+          fetch_model ja vosk-model-small-ja-0.22
 
       - name: Restore signing keystore
         run: base64 --decode .buildsrc/dualqueue-release.keystore.b64 > app/dualqueue-release.keystore
@@ -64,14 +79,16 @@ jobs:
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging app/build/outputs/apk/release/app-release.apk | head -30
 
-      - name: Verify Vosk model packaged
+      - name: Verify all Vosk models packaged
         run: |
-          unzip -l app/build/outputs/apk/release/app-release.apk | grep 'assets/vosk-model/conf/model.conf'
+          for code in en it fr es de ja; do
+            unzip -l app/build/outputs/apk/release/app-release.apk | grep "assets/vosk-model-${code}/conf/model.conf"
+          done
 
       - name: Upload MemSort APK
         uses: actions/upload-artifact@v4
         with:
-          name: MemSort-v1.2-signed-apk
+          name: MemSort-v1.3-multilingual-signed-apk
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
