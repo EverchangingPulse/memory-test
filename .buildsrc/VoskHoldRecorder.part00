@@ -35,7 +35,8 @@ class VoskHoldRecorder(
     private val input: EditText,
     private val status: TextView,
     private val languageSupplier: Supplier<String>,
-    private val expectedSupplier: Supplier<List<String>>,
+    private val itemTypeSupplier: Supplier<String>,
+    private val numberRangeSupplier: Supplier<Int>,
     private val normalizer: Function<String, String>,
     private val onCommitted: Runnable
 ) : RecognitionListener {
@@ -92,16 +93,11 @@ class VoskHoldRecorder(
                         return@setOnTouchListener true
                     }
 
-                    val expected = expectedSupplier.get().orEmpty()
-                    if (expected.isEmpty()) {
-                        holding = false
-                        holdButton.isPressed = false
-                        holdButton.text = "🎙  Hold to speak"
-                        status.text = "No active answer to recognize."
-                        return@setOnTouchListener true
-                    }
-
-                    currentVocabulary = buildVocabulary(languageTag, expected)
+                    currentVocabulary = buildVocabulary(
+                        languageTag,
+                        itemTypeSupplier.get(),
+                        numberRangeSupplier.get()
+                    )
                     if (currentVocabulary.spokenToToken.isEmpty()) {
                         holding = false
                         holdButton.isPressed = false
@@ -319,3 +315,7 @@ class VoskHoldRecorder(
                 modelLanguage = languageTag
                 loadingLanguage = ""
                 try { old?.close() } catch (_: Exception) {}
+                holdButton.isEnabled = true
+                holdButton.text = "🎙  Hold to speak"
+                status.text = "Offline ${languageDisplayName(languageTag)} voice recognition ready."
+            } catch (error: Exception) {

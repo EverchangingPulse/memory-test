@@ -1,7 +1,3 @@
-                holdButton.isEnabled = true
-                holdButton.text = "🎙  Hold to speak"
-                status.text = "Offline ${languageDisplayName(languageTag)} voice recognition ready."
-            } catch (error: Exception) {
                 if (loadingLanguage == languageTag) {
                     loadingLanguage = ""
                     modelLanguage = ""
@@ -43,11 +39,23 @@
         children.forEach { child -> copyAssetTree("$assetPath/$child", File(target, child)) }
     }
 
-    private fun buildVocabulary(languageTag: String, expected: List<String>): RecognitionVocabulary {
-        val cleanedExpected = expected.map { it.trim().uppercase(Locale.ROOT) }.filter { it.matches(Regex("(?:\\d{1,2}|[A-Z])")) }.distinct()
-        val phraseMap = linkedMapOf<String, String>()
+    private fun buildVocabulary(
+        languageTag: String,
+        itemType: String,
+        maxNumber: Int
+    ): RecognitionVocabulary {
+        val includeNumbers = itemType != "Letters only"
+        val includeLetters = itemType != "Numbers only"
+        val allowedTokens = mutableListOf<String>()
+        if (includeNumbers) {
+            for (number in 1..maxNumber.coerceIn(1, 99)) allowedTokens += number.toString()
+        }
+        if (includeLetters) {
+            for (letter in 'A'..'Z') allowedTokens += letter.toString()
+        }
 
-        cleanedExpected.forEach { token ->
+        val phraseMap = linkedMapOf<String, String>()
+        allowedTokens.forEach { token ->
             spokenVariants(languageTag, token).forEach { spoken ->
                 val normalized = normalizePhrase(spoken)
                 if (normalized.isNotBlank()) phraseMap[normalized] = token
@@ -63,11 +71,9 @@
             }
         }
 
-        val hasNumbers = cleanedExpected.any { it.firstOrNull()?.isDigit() == true }
-        val hasLetters = cleanedExpected.any { it.length == 1 && it[0] in 'A'..'Z' }
         val description = when {
-            hasNumbers && hasLetters -> "letters and numbers"
-            hasNumbers -> "numbers"
+            includeNumbers && includeLetters -> "letters and numbers"
+            includeNumbers -> "numbers"
             else -> "letters"
         }
 
@@ -228,3 +234,6 @@
         else -> "en"
     }
 
+    private fun languageDisplayName(languageTag: String): String = when (modelCode(languageTag)) {
+        "it" -> "Italian"
+        "fr" -> "French"
