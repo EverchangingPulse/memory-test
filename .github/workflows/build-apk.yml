@@ -39,6 +39,7 @@ jobs:
         run: |
           mkdir -p app/src/main/java/com/example/dualqueue
           cat .buildsrc/MainActivity.part* > app/src/main/java/com/example/dualqueue/MainActivity.java
+          cat .buildsrc/VoskHoldRecorder.part* > app/src/main/java/com/example/dualqueue/VoskHoldRecorder.kt
           python3 .buildsrc/patch_memsort_vosk.py
 
       - name: Bundle multilingual Vosk mobile models
