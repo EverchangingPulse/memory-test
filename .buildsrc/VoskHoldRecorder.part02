@@ -1,6 +1,3 @@
-    private fun languageDisplayName(languageTag: String): String = when (modelCode(languageTag)) {
-        "it" -> "Italian"
-        "fr" -> "French"
         "es" -> "Spanish"
         "de" -> "German"
         "ja" -> "Japanese"
